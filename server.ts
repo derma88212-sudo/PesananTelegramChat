@@ -2139,21 +2139,28 @@ Respond ONLY with valid JSON in this exact structure:
 app.post('/api/broadcast/start', async (req, res) => {
   try {
     const { message, photo_url, target_language, button_label, button_url } = req.body;
-    if (!message) return res.status(400).json({ success: false, message: 'Pesan broadcast tidak boleh kosong.' });
+    if (!message) {
+      return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
+    }
 
-    const broadcastConfig = {
+    const broadcastJob = await runBroadcast({
+      dbService,
       message,
-      photo_url: photo_url || null,
-      target_language: target_language || 'ALL',
-      button_label: button_label || null,
-      button_url: button_url || null
-    };
-
-    runBroadcast(broadcastConfig, dbService).catch(err => {
-      console.error('[Broadcast Error]:', err);
+      photoUrl: photo_url,
+      targetLanguage: target_language || 'ALL',
+      buttonLabel: button_label,
+      buttonUrl: button_url
     });
 
-    res.json({ success: true, message: 'Broadcast berhasil dimulai di latar belakang.' });
+    res.json({ success: true, broadcast: broadcastJob });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/broadcast/status', (req, res) => {
+  try {
+    res.json({ success: true, status: getBroadcastStatus() });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2162,65 +2169,126 @@ app.post('/api/broadcast/start', async (req, res) => {
 app.post('/api/broadcast/stop', (req, res) => {
   try {
     stopBroadcast();
-    res.json({ success: true, message: 'Broadcast dihentikan.' });
+    res.json({ success: true, message: 'Proses broadcast dihentikan.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-app.get('/api/broadcast/status', (req, res) => {
+// 12. NOWPayments IPN Webhook Receiver
+app.post('/api/webhooks/nowpayments', async (req, res) => {
   try {
-    const status = getBroadcastStatus();
-    res.json({ success: true, data: status });
+    const rawPayload = (req as any).rawBody || JSON.stringify(req.body);
+    const signature = req.headers['x-nowpayments-sig'] as string;
+
+    const isValid = cryptoGateway.verifyIpnSignature(rawPayload, signature);
+    if (!isValid) {
+      console.warn('[Webhook] Invalid NOWPayments signature received');
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    const payload = req.body;
+    console.log('[Webhook] Valid NOWPayments notification:', payload.payment_id, payload.payment_status);
+
+    const orderId = payload.order_id;
+    const paymentStatus = payload.payment_status;
+
+    if (orderId && (paymentStatus === 'finished' || paymentStatus === 'confirmed')) {
+      const order = await dbService.getOrder(orderId);
+      if (order && order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
+        let deliveredAccount = order.account_delivered;
+        if (!deliveredAccount) {
+          try {
+            const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
+            if (stock && stock.account_data) {
+              deliveredAccount = stock.account_data;
+            } else {
+              deliveredAccount = 'Akun fisik belum tersedia di stok. Admin akan segera mengirimkannya.';
+            }
+          } catch (e: any) {
+            deliveredAccount = 'Akun siap dikirim manual oleh admin.';
+          }
+        }
+
+        await dbService.updateOrder(orderId, {
+          payment_status: 'PAID',
+          payment_id: payload.payment_id,
+          account_delivered: deliveredAccount,
+          updated_at: new Date().toISOString()
+        });
+
+        sendTelegramDeliveryNotice({ ...order, order_id: orderId }, deliveredAccount).catch(() => {});
+      }
+    }
+
+    res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error('[Webhook Error]:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Server Initialization
-async function startServer() {
-  await dbService.ensureSeeded();
+// Telegram Webhook Gateway Endpoint (When polling is disabled or webhooks configured)
+app.post('/api/webhooks/telegram/:tokenId', async (req, res) => {
+  const { tokenId } = req.params;
+  const botRecord = activeBots.get(tokenId);
 
-  // Auto initialize webhooks/polling for Telegram bots
-  startMultiBotManager(dbService).catch(err => {
-    console.error('[MultiBot] Start Error:', err);
-  });
+  if (botRecord && botRecord.bot) {
+    try {
+      await botRecord.bot.handleUpdate(req.body, res);
+      return;
+    } catch (err: any) {
+      console.error(`[Webhook Telegram] Processing error for bot ${tokenId}:`, err.message);
+    }
+  }
 
-  // Setup Vite Dev Server / Static Middleware
-  if (process.env.NODE_ENV !== 'production') {
+  res.sendStatus(200);
+});
+
+// Initialize background multi-bot engine
+(async () => {
+  try {
+    await autoMigrateUniversalDatabase(dbService);
+    await startMultiBotManager(dbService);
+    await initializeWebhooks(app, dbService);
+  } catch (botErr: any) {
+    console.warn('[MultiBot Manager Warning]:', botErr.message);
+  }
+})();
+
+// Serve Frontend Vite App in Development or Static Assets in Production
+if (process.env.NODE_ENV !== 'production') {
+  try {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'custom'
+      appType: 'spa'
     });
     app.use(vite.middlewares);
-    app.use('*', async (req, res, next) => {
-      if (req.originalUrl.startsWith('/api')) return next();
-      try {
-        const template = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
-        const page = await vite.transformIndexHtml(req.originalUrl, template);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(page);
-      } catch (e: any) {
-        vite.ssrFixStacktrace(e);
-        next(e);
-      }
-    });
-  } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
+  } catch (vErr) {
+    console.warn('[Vite Server Middleware Note]:', vErr);
+  }
+} else {
+  const distPath = path.join(process.cwd(), 'dist');
+  if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
-    app.use('*', (req, res, next) => {
-      if (req.originalUrl.startsWith('/api')) return next();
-      res.sendFile(path.resolve(distPath, 'index.html'));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
 }
 
-startServer().catch(err => {
-  console.error('Failed to start server:', err);
+// Global Express Fallback Listener
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 [Server Ready] Store Express backend online on port ${PORT}`);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]:', err.message);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[Unhandled Rejection]:', reason?.message || reason);
 });
 
 export default app;
-export { app };
+export {app};
