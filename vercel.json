@@ -3,12 +3,11 @@
   "buildCommand": "npm run build:vercel",
   "installCommand": "npm install",
   "outputDirectory": "dist",
-  "framework": null,
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
       "memory": 1024,
-      "includeFiles": "{server.ts,db_service.ts,crypto_gateway.ts,bot_engine.ts,broadcast_engine.ts,translations.ts,supabase_client.ts,multi_db.ts}"
+      "includeFiles": "*.ts"
     }
   },
   "rewrites": [
