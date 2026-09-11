@@ -2136,39 +2136,71 @@ Respond ONLY with valid JSON in this exact structure:
 });
 
 // 11. Broadcast Engine APIs
+app.get('/api/broadcast/status', (req, res) => {
+  res.json({ success: true, data: getBroadcastStatus() });
+});
 
+app.post('/api/broadcast/start', async (req, res) => {
+  try {
+    const { message, target_users, parse_mode } = req.body || {};
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi.' });
+    }
+    const result = await runBroadcast({
+      message: String(message).trim(),
+      targetUsers: target_users || 'all',
+      parseMode: parse_mode || 'HTML',
+      db: dbService
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/broadcast/stop', (req, res) => {
+  const stopped = stopBroadcast();
+  res.json({ success: true, stopped });
+});
 
 // 12. Webhooks Handlers
 // NOWPayments Automatic Crypto Callback Receiver
-app.post('/api/webhooks/nowpayments', async (req: any, res) => {
+app.post('/api/webhooks/nowpayments', async (req, res) => {
   try {
-    const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET || '';
-    const sigHeader = req.headers['x-nowpayments-sig'];
+    const rawBuf = (req as any).rawBody || Buffer.from(JSON.stringify(req.body));
+    const signature = req.headers['x-nowpayments-sig'] as string;
+    
+    const settings = await dbService.getSettings();
+    const ipnSecret = settings.nowpayments_ipn_secret || process.env.NOWPAYMENTS_IPN_SECRET;
 
-    if (ipnSecret && sigHeader) {
+    if (ipnSecret && signature) {
       const hmac = crypto.createHmac('sha512', ipnSecret);
-      const rawPayload = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
-      hmac.update(rawPayload);
+      hmac.update(rawBuf);
       const calculatedSig = hmac.digest('hex');
-
-      if (calculatedSig !== sigHeader) {
-        console.warn('[Webhook NOWPayments] Signature mismatch rejected.');
-        return res.status(401).json({ error: 'Invalid signature' });
+      if (calculatedSig !== signature) {
+        console.warn('[NOWPayments Webhook] Invalid signature verification');
+        return res.status(400).json({ error: 'Invalid HMAC signature' });
       }
     }
 
-    const { order_id, payment_status, pay_amount, outcome_amount } = req.body;
-    console.log(`[Webhook NOWPayments] Order ${order_id} -> status: ${payment_status}`);
+    const { payment_status, order_id, pay_amount, actually_paid } = req.body;
+    console.log(`[NOWPayments IPN] Order: ${order_id}, Status: ${payment_status}`);
 
-    if (order_id) {
-      const isPaid = payment_status === 'finished' || payment_status === 'confirmed';
+    if (payment_status === 'finished' || payment_status === 'confirmed') {
       const order = await dbService.getOrder(order_id);
-
-      if (order && isPaid && order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
+      if (order && order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
         let deliveredAccount = order.account_delivered;
         if (!deliveredAccount) {
-          const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
-          deliveredAccount = stock ? stock.account_data : 'Stok habis, hubungi admin untuk pengiriman manual.';
+          try {
+            const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
+            if (stock && stock.account_data) {
+              deliveredAccount = stock.account_data;
+            } else {
+              deliveredAccount = 'Akun fisik belum tersedia di stok. Admin akan segera menghubungi Anda.';
+            }
+          } catch (e: any) {
+            deliveredAccount = 'Akun siap dikirim manual oleh admin.';
+          }
         }
 
         await dbService.updateOrder(order_id, {
@@ -2181,70 +2213,102 @@ app.post('/api/webhooks/nowpayments', async (req: any, res) => {
       }
     }
 
-    res.json({ status: 'ok' });
+    res.json({ success: true });
   } catch (err: any) {
-    console.error('[Webhook NOWPayments Error]:', err.message);
+    console.error('[NOWPayments Webhook Error]:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Generic Telegram Webhook Endpoint
+// Telegram Bot Webhook Receiver Handler
 app.post('/api/webhooks/telegram/:tokenId', async (req, res) => {
   try {
     const { tokenId } = req.params;
-    const activeInfo = activeBots.get(tokenId);
-    if (activeInfo && activeInfo.bot) {
-      await activeInfo.bot.handleUpdate(req.body, res);
-    } else {
-      res.status(404).send('Bot engine for token not active');
+    const update = req.body;
+    
+    const botInstance = activeBots.get(tokenId);
+    if (botInstance && botInstance.bot) {
+      await botInstance.bot.handleUpdate(update);
+      return res.json({ ok: true });
     }
+
+    // Attempt auto-launch / initialize webhooks on demand
+    const tokens = await dbService.getBotTokens();
+    const tokenRecord = tokens.find((t: any) => t.token_id === tokenId);
+    if (tokenRecord) {
+      const launchRes = await launchSingleBot(tokenRecord, dbService);
+      if (launchRes.success && launchRes.instance) {
+        await launchRes.instance.bot.handleUpdate(update);
+        return res.json({ ok: true });
+      }
+    }
+
+    res.status(404).json({ ok: false, message: 'Bot instance not found or offline' });
   } catch (err: any) {
-    res.status(500).send(err.message);
+    console.error('[Telegram Webhook Error]:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// --- VITE / STATIC SERVING FRONTEND AT LAST ---
-async function startServer() {
-  await dbService.ensureSeeded();
-
-  // Initialize background tasks & database auto-migrations
+// Initialization & Server Bootstrap
+let isInitialized = false;
+async function initializeApp() {
+  if (isInitialized) return;
   try {
-    autoMigrateUniversalDatabase(dbService).catch(() => {});
-  } catch (e) {}
-
-  // Auto-start active bots registered in DB
-  try {
-    await startMultiBotManager(dbService);
-  } catch (e: any) {
-    console.warn('[MultiBotManager Startup Note]:', e.message);
-  }
-
-  const isProduction = process.env.NODE_ENV === 'production';
-
-  if (!isProduction) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa'
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get('*', (req, res, next) => {
-        if (req.path.startsWith('/api')) return next();
-        res.sendFile(path.join(distPath, 'index.html'));
-      });
+    await dbService.ensureSeeded();
+    await autoMigrateUniversalDatabase(dbService);
+    
+    const settings = await dbService.getSettings();
+    if (settings && settings.nowpayments_api_key) {
+      cryptoGateway.setCredentials(
+        settings.nowpayments_api_key,
+        settings.nowpayments_ipn_secret || '',
+        settings.nowpayments_sandbox === true
+      );
     }
-  }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`================================================`);
-    console.log(`🚀 Store Server Running on http://0.0.0.0:${PORT}`);
-    console.log(`================================================`);
-  });
+    if (process.env.VERCEL) {
+      await initializeWebhooks(dbService);
+    } else {
+      await startMultiBotManager(dbService);
+    }
+
+    isInitialized = true;
+  } catch (err: any) {
+    console.error('[Initialization Error]:', err.message);
+  }
 }
 
-startServer();
+// Middleware to ensure DB and Bots are initialized before handling requests
+app.use(async (req, res, next) => {
+  await initializeApp();
+  next();
+});
+
+// Serverless / Local Listening Setup
+if (!process.env.VERCEL) {
+  async function startLocalServer() {
+    if (process.env.NODE_ENV !== 'production') {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'custom'
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), 'dist');
+      if (fs.existsSync(distPath)) {
+        app.use(express.static(distPath));
+        app.get('*', (req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+      }
+    }
+
+    app.listen(PORT, () => {
+      console.log(`Server running locally on port ${PORT}`);
+    });
+  }
+  startLocalServer();
+}
 
 export default app;
