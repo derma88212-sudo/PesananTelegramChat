@@ -2141,24 +2141,20 @@ app.post('/api/broadcast/start', async (req, res) => {
     const { message, photo_url, target_language, button_label, button_url } = req.body;
     if (!message) return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
 
-    const result = await runBroadcast({
+    const status = getBroadcastStatus();
+    if (status.is_running) {
+      return res.status(400).json({ success: false, message: 'Proses broadcast sedang berjalan.' });
+    }
+
+    runBroadcast(dbService, {
       message,
-      photoUrl: photo_url,
-      targetLanguage: target_language,
-      buttonLabel: button_label,
-      buttonUrl: button_url
-    });
+      photo_url,
+      target_language,
+      button_label,
+      button_url
+    }).catch(e => console.error('Broadcast execution error:', e));
 
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.post('/api/broadcast/stop', (req, res) => {
-  try {
-    const stopped = stopBroadcast();
-    res.json({ success: true, stopped });
+    res.json({ success: true, message: 'Broadcast berhasil dimulai.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2166,33 +2162,56 @@ app.post('/api/broadcast/stop', (req, res) => {
 
 app.get('/api/broadcast/status', (req, res) => {
   try {
-    res.json({ success: true, status: getBroadcastStatus() });
+    res.json({ success: true, data: getBroadcastStatus() });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 12. NOWPayments IPN Webhook Handler
+app.post('/api/broadcast/stop', (req, res) => {
+  try {
+    stopBroadcast();
+    res.json({ success: true, message: 'Sinyal penghentian broadcast telah dikirim.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// 12. NOWPayments Webhook IPN Callback (Instant Payment Verification)
 app.post('/api/webhooks/nowpayments', async (req: any, res) => {
   try {
-    const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
-    const sigHeader = req.headers['x-nowpayments-sig'];
+    console.log('[NOWPayments IPN] Received callback body:', JSON.stringify(req.body));
+    const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET || (await dbService.getSettings()).nowpayments_ipn_secret;
 
-    if (ipnSecret && sigHeader && req.rawBody) {
-      const hmac = crypto.createHmac('sha512', ipnSecret);
-      hmac.update(req.rawBody);
-      const calculatedSig = hmac.digest('hex');
-      if (calculatedSig !== sigHeader) {
-        return res.status(400).json({ error: 'Invalid IPN Signature' });
+    if (ipnSecret) {
+      const hmacHeader = req.headers['x-nowpayments-sig'];
+      if (!hmacHeader) {
+        console.warn('[NOWPayments IPN] Missing x-nowpayments-sig header.');
+        return res.status(400).send('Missing Signature Header');
+      }
+
+      // Hash raw request body buffer to preserve original key order and types
+      const rawPayload = req.rawBody || JSON.stringify(req.body);
+      const calculatedHmac = crypto.createHmac('sha512', ipnSecret).update(rawPayload).digest('hex');
+
+      if (calculatedHmac !== hmacHeader) {
+        console.warn('[NOWPayments IPN] HMAC Signature Verification Failed.');
+        return res.status(400).send('Invalid Signature');
       }
     }
 
-    const { payment_status, order_id, pay_amount, outcome_amount } = req.body;
-    if (!order_id) return res.status(400).send('Missing order_id');
+    const { payment_id, payment_status, order_id, actually_paid, outcome_amount } = req.body;
+    console.log(`[NOWPayments IPN] Payment ${payment_id} for Order #${order_id} status: ${payment_status}`);
 
-    if (payment_status === 'finished' || payment_status === 'confirmed') {
-      const order = await dbService.getOrder(order_id);
-      if (order && order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
+    const order = await dbService.getOrder(order_id || String(payment_id));
+    if (!order) {
+      console.warn(`[NOWPayments IPN] Order ${order_id || payment_id} not found.`);
+      return res.status(200).send('Order Not Found');
+    }
+
+    // Process status updates: finished, confirmed, waiting, failed, etc.
+    if (['finished', 'confirmed', 'sending'].includes(payment_status)) {
+      if (order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
         let deliveredAccount = order.account_delivered;
         if (!deliveredAccount) {
           try {
@@ -2200,83 +2219,101 @@ app.post('/api/webhooks/nowpayments', async (req: any, res) => {
             if (stock && stock.account_data) {
               deliveredAccount = stock.account_data;
             } else {
-              deliveredAccount = 'Akun fisik belum tersedia di stok. Admin akan segera mengirimkannya.';
+              deliveredAccount = 'Akun fisik belum tersedia di stok. Silakan hubungi admin.';
             }
-          } catch (e: any) {
+          } catch (stkErr: any) {
+            console.warn('[IPN Stock Claim Error]:', stkErr.message);
             deliveredAccount = 'Akun siap dikirim manual oleh admin.';
           }
         }
 
-        await dbService.updateOrder(order_id, {
+        await dbService.updateOrder(order.order_id, {
           payment_status: 'PAID',
           account_delivered: deliveredAccount,
+          payment_id: payment_id || order.payment_id,
           updated_at: new Date().toISOString()
         });
 
-        sendTelegramDeliveryNotice({ ...order, order_id }, deliveredAccount).catch(() => {});
+        sendTelegramDeliveryNotice({ ...order, amount: actually_paid || outcome_amount || order.amount }, deliveredAccount).catch(() => {});
+        console.log(`[NOWPayments IPN] Order #${order.order_id} successfully marked as PAID!`);
+      }
+    } else if (['failed', 'expired', 'refunded'].includes(payment_status)) {
+      if (order.payment_status === 'PENDING') {
+        try {
+          await dbService.releaseClaimedStock(order.order_id);
+        } catch (e: any) {}
+
+        await dbService.updateOrder(order.order_id, {
+          payment_status: 'FAILED',
+          updated_at: new Date().toISOString()
+        });
+
+        sendTelegramCancellationNotice(order, `Pembayaran ${payment_status}`).catch(() => {});
       }
     }
 
-    res.json({ status: 'ok' });
+    return res.status(200).send('OK');
   } catch (err: any) {
-    console.error('[NOWPayments Webhook Error]:', err.message);
-    res.status(500).send('Internal Server Error');
+    console.error('[NOWPayments IPN Error]:', err.message);
+    return res.status(500).send('Internal Server Error');
   }
 });
 
-// 13. Telegram Webhook Endpoint per-Bot Token
-app.post('/api/telegram/webhook/:tokenId', async (req, res) => {
-  try {
-    const { tokenId } = req.params;
-    const botInstance = activeBots.get(tokenId);
-    if (botInstance && botInstance.bot) {
-      await botInstance.bot.handleUpdate(req.body, res);
-    } else {
-      res.status(404).send('Bot engine not found or offline');
-    }
-  } catch (err: any) {
-    console.error('[Telegram Webhook Error]:', err.message);
-    if (!res.headersSent) {
-      res.status(500).send('Error processing webhook');
-    }
-  }
-});
+// --- VITE DEV SERVER OR STATIC SERVING ---
+async function setupFrontend() {
+  const isProd = process.env.NODE_ENV === 'production';
 
-// Auto-start multi-bot polling engine on launch
-startMultiBotManager(dbService).catch(err => {
-  console.warn('[Multi-Bot Engine] Startup warning:', err.message);
-});
-
-// Auto-migration & Database verification
-autoMigrateUniversalDatabase(dbService).catch(err => {
-  console.warn('[Universal DB Auto-Migrate] Warning:', err.message);
-});
-
-// --- VITE FRONTEND MIDDLEWARE (Development / Production Setup) ---
-if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-  createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa'
-  }).then(vite => {
-    app.use(vite.middlewares);
-  });
-} else {
-  const distPath = path.join(process.cwd(), 'dist');
-  if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
-    app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api')) return next();
-      res.sendFile(path.join(distPath, 'index.html'));
+  if (!isProd) {
+    // Create Vite server in middleware mode and use Vite's connect instance as middleware
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa'
     });
+    app.use(vite.middlewares);
+    console.log('[Express] Vite middleware loaded in development mode.');
+  } else {
+    // Serve static dist folder in production
+    const distPath = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+      console.log(`[Express] Serving static production build from ${distPath}`);
+    } else {
+      console.warn(`[Express] Warning: Production build folder '${distPath}' not found. Run 'npm run build' first.`);
+      app.get('*', (req, res) => {
+        res.status(404).send('Application build not found. Please run build step.');
+      });
+    }
   }
 }
 
-// Start standalone HTTP Server only when NOT in Vercel Serverless environment
-if (!process.env.VERCEL) {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server berjalan di http://0.0.0.0:${PORT}`);
-  });
+// Global server initialization and startup
+async function startServer() {
+  try {
+    // Ensure initial database connectivity and required seeds
+    await dbService.ensureSeeded();
+    await autoMigrateUniversalDatabase(dbService);
+
+    // Initialize multi-bot engine
+    await startMultiBotManager(dbService);
+    await initializeWebhooks(app, dbService);
+
+    // Mount Vite / Static static assets
+    await setupFrontend();
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`=======================================================`);
+      console.log(`🚀 DIGITAL STORE SERVER READY ON PORT ${PORT}`);
+      console.log(`🌐 Local URL: http://localhost:${PORT}`);
+      console.log(`🤖 Multi-Bot Engine: Active (${activeBots.size} bots running)`);
+      console.log(`=======================================================`);
+    });
+  } catch (err: any) {
+    console.error('Fatal Server Startup Error:', err);
+    process.exit(1);
+  }
 }
 
-// ALWAYS export default Express app for Vercel Serverless Function compatibility
-export default app;
+startServer();
