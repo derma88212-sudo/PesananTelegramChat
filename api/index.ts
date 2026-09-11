@@ -1,4 +1,4 @@
-import app from '../server.js';
+import app from '../server';
 
 // Vercel serverless function entrypoint.
 // On a cold start we run a one-time bootstrap (DB seeding + bot webhook setup)
@@ -10,7 +10,7 @@ let bootstrapPromise: Promise<void> | null = null;
 function ensureBootstrapped(req?: any, res?: any): Promise<void> {
   if (!bootstrapPromise) {
     // Memeriksa apakah ada fungsi bootstrapServerless yang ditempelkan ke app
-    // atau jika app/server.js itu sendiri berupa fungsi bootstrap.
+    // atau jika app/server.ts itu sendiri berupa fungsi bootstrap.
     const bootstrapFn = (app as any)?.bootstrapServerless || (typeof app === 'function' ? app : null);
 
     if (typeof bootstrapFn === 'function') {
