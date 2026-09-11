@@ -1647,7 +1647,7 @@ app.get('/api/bots', async (req, res) => {
       return {
         ...t,
         status: activeInfo ? activeInfo.status : (t.status || 'stopped'),
-        running: activeInfo?.status === 'online'
+        is_running: activeInfo?.status === 'online'
       };
     });
     res.json({ success: true, data: list });
@@ -2139,30 +2139,21 @@ Respond ONLY with valid JSON in this exact structure:
 app.post('/api/broadcast/start', async (req, res) => {
   try {
     const { message, photo_url, target_language, button_label, button_url } = req.body;
-    if (!message) return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
+    if (!message) return res.status(400).json({ success: false, message: 'Pesan broadcast tidak boleh kosong.' });
 
-    const status = getBroadcastStatus();
-    if (status.running) {
-      return res.status(400).json({ success: false, message: 'Proses broadcast sedang berjalan.' });
-    }
-
-    runBroadcast(dbService, {
+    const broadcastConfig = {
       message,
-      photo_url,
-      target_language,
-      button_label,
-      button_url
-    }).catch(e => console.error('Broadcast execution error:', e));
+      photo_url: photo_url || null,
+      target_language: target_language || 'ALL',
+      button_label: button_label || null,
+      button_url: button_url || null
+    };
 
-    res.json({ success: true, message: 'Broadcast berhasil dimulai.' });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+    runBroadcast(broadcastConfig, dbService).catch(err => {
+      console.error('[Broadcast Error]:', err);
+    });
 
-app.get('/api/broadcast/status', (req, res) => {
-  try {
-    res.json({ success: true, data: getBroadcastStatus() });
+    res.json({ success: true, message: 'Broadcast berhasil dimulai di latar belakang.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2171,151 +2162,65 @@ app.get('/api/broadcast/status', (req, res) => {
 app.post('/api/broadcast/stop', (req, res) => {
   try {
     stopBroadcast();
-    res.json({ success: true, message: 'Sinyal penghentian broadcast telah dikirim.' });
+    res.json({ success: true, message: 'Broadcast dihentikan.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 12. NOWPayments Webhook IPN Callback (Instant Payment Verification)
-app.post('/api/webhooks/nowpayments', async (req: any, res) => {
+app.get('/api/broadcast/status', (req, res) => {
   try {
-    console.log('[NOWPayments IPN] Received callback body:', JSON.stringify(req.body));
-    const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET || (await dbService.getSettings()).nowpayments_ipn_secret;
-
-    if (ipnSecret) {
-      const hmacHeader = req.headers['x-nowpayments-sig'];
-      if (!hmacHeader) {
-        console.warn('[NOWPayments IPN] Missing x-nowpayments-sig header.');
-        return res.status(400).send('Missing Signature Header');
-      }
-
-      // Hash raw request body buffer to preserve original key order and types
-      const rawPayload = req.rawBody || JSON.stringify(req.body);
-      const calculatedHmac = crypto.createHmac('sha512', ipnSecret).update(rawPayload).digest('hex');
-
-      if (calculatedHmac !== hmacHeader) {
-        console.warn('[NOWPayments IPN] HMAC Signature Verification Failed.');
-        return res.status(400).send('Invalid Signature');
-      }
-    }
-
-    const { payment_id, payment_status, order_id, actually_paid, outcome_amount } = req.body;
-    console.log(`[NOWPayments IPN] Payment ${payment_id} for Order #${order_id} status: ${payment_status}`);
-
-    const order = await dbService.getOrder(order_id || String(payment_id));
-    if (!order) {
-      console.warn(`[NOWPayments IPN] Order ${order_id || payment_id} not found.`);
-      return res.status(200).send('Order Not Found');
-    }
-
-    // Process status updates: finished, confirmed, waiting, failed, etc.
-    if (['finished', 'confirmed', 'sending'].includes(payment_status)) {
-      if (order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
-        let deliveredAccount = order.account_delivered;
-        if (!deliveredAccount) {
-          try {
-            const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
-            if (stock && stock.account_data) {
-              deliveredAccount = stock.account_data;
-            } else {
-              deliveredAccount = 'Akun fisik belum tersedia di stok. Silakan hubungi admin.';
-            }
-          } catch (stkErr: any) {
-            console.warn('[IPN Stock Claim Error]:', stkErr.message);
-            deliveredAccount = 'Akun siap dikirim manual oleh admin.';
-          }
-        }
-
-        await dbService.updateOrder(order.order_id, {
-          payment_status: 'PAID',
-          account_delivered: deliveredAccount,
-          payment_id: payment_id || order.payment_id,
-          updated_at: new Date().toISOString()
-        });
-
-        sendTelegramDeliveryNotice({ ...order, amount: actually_paid || outcome_amount || order.amount }, deliveredAccount).catch(() => {});
-        console.log(`[NOWPayments IPN] Order #${order.order_id} successfully marked as PAID!`);
-      }
-    } else if (['failed', 'expired', 'refunded'].includes(payment_status)) {
-      if (order.payment_status === 'PENDING') {
-        try {
-          await dbService.releaseClaimedStock(order.order_id);
-        } catch (e: any) {}
-
-        await dbService.updateOrder(order.order_id, {
-          payment_status: 'FAILED',
-          updated_at: new Date().toISOString()
-        });
-
-        sendTelegramCancellationNotice(order, `Pembayaran ${payment_status}`).catch(() => {});
-      }
-    }
-
-    return res.status(200).send('OK');
+    const status = getBroadcastStatus();
+    res.json({ success: true, data: status });
   } catch (err: any) {
-    console.error('[NOWPayments IPN Error]:', err.message);
-    return res.status(500).send('Internal Server Error');
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// --- VITE DEV SERVER OR STATIC SERVING ---
-async function setupFrontend() {
-  const isProd = process.env.NODE_ENV === 'production';
+// Server Initialization
+async function startServer() {
+  await dbService.ensureSeeded();
 
-  if (!isProd) {
-    // Create Vite server in middleware mode and use Vite's connect instance as middleware
+  // Auto initialize webhooks/polling for Telegram bots
+  startMultiBotManager(dbService).catch(err => {
+    console.error('[MultiBot] Start Error:', err);
+  });
+
+  // Setup Vite Dev Server / Static Middleware
+  if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa'
+      appType: 'custom'
     });
     app.use(vite.middlewares);
-    console.log('[Express] Vite middleware loaded in development mode.');
-  } else {
-    // Serve static dist folder in production
-    const distPath = path.join(process.cwd(), 'dist');
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get('*', (req, res) => {
-        res.sendFile(path.join(distPath, 'index.html'));
-      });
-      console.log(`[Express] Serving static production build from ${distPath}`);
-    } else {
-      console.warn(`[Express] Warning: Production build folder '${distPath}' not found. Run 'npm run build' first.`);
-      app.get('*', (req, res) => {
-        res.status(404).send('Application build not found. Please run build step.');
-      });
-    }
-  }
-}
-
-// Global server initialization and startup
-async function startServer() {
-  try {
-    // Ensure initial database connectivity and required seeds
-    await dbService.ensureSeeded();
-    await autoMigrateUniversalDatabase(dbService);
-
-    // Initialize multi-bot engine
-    await startMultiBotManager(dbService);
-    await initializeWebhooks(app, dbService);
-
-    // Mount Vite / Static static assets
-    await setupFrontend();
-
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`=======================================================`);
-      console.log(`🚀 DIGITAL STORE SERVER READY ON PORT ${PORT}`);
-      console.log(`🌐 Local URL: http://localhost:${PORT}`);
-      console.log(`🤖 Multi-Bot Engine: Active (${activeBots.size} bots running)`);
-      console.log(`=======================================================`);
+    app.use('*', async (req, res, next) => {
+      if (req.originalUrl.startsWith('/api')) return next();
+      try {
+        const template = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
+        const page = await vite.transformIndexHtml(req.originalUrl, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(page);
+      } catch (e: any) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
     });
-  } catch (err: any) {
-    console.error('Fatal Server Startup Error:', err);
-    process.exit(1);
+  } else {
+    const distPath = path.resolve(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.use('*', (req, res, next) => {
+      if (req.originalUrl.startsWith('/api')) return next();
+      res.sendFile(path.resolve(distPath, 'index.html'));
+    });
   }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+});
+
 export default app;
 export { app };
