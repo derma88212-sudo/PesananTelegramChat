@@ -2136,45 +2136,6 @@ Respond ONLY with valid JSON in this exact structure:
 });
 
 // 11. Broadcast Engine APIs
-// 11. Broadcast Engine APIs
-app.post('/api/broadcast/start', async (req, res) => {
-  try {
-    const { message, photo_url, target_language, button_label, button_url } = req.body;
-    if (!message) {
-      return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
-    }
-
-    const result = await runBroadcast(bot, dbService, {
-      message,
-      photoUrl: photo_url,
-      targetLanguage: target_language || 'ALL',
-      buttonLabel: button_label,
-      buttonUrl: button_url
-    }, undefined);
-
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.post('/api/broadcast/stop', (req, res) => {
-  try {
-    const stopped = stopBroadcast();
-    res.json({ success: true, stopped });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.get('/api/broadcast/status', (req, res) => {
-  try {
-    const status = getBroadcastStatus();
-    res.json({ success: true, data: status });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 
 // 12. Webhooks Handlers
