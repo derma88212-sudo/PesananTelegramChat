@@ -25,6 +25,18 @@ class DatabaseService {
   constructor() {
     this.db = db;
     this.initialized = false;
+    // Properti string pendukung agar tidak error saat dioper ke handler yang mengekspektasikan string/path
+    this.path = '/';
+    this.root = '/';
+  }
+
+  // String coercion conversion agar aman dari TS2345 jika instance dioper langsung sebagai string
+  toString() {
+    return 'DatabaseService';
+  }
+
+  valueOf() {
+    return 'DatabaseService';
   }
 
   get supabase() {
