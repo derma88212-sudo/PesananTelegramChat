@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Telegram ChatGPT & Digital Products Shop Firestore Schema",
+  "collections": {
+    "users": {
+      "description": "Telegram user accounts interacting with the shop bots",
+      "fields": {
+        "telegram_id": "string (unique Telegram ID)",
+        "username": "string (Telegram username without @)",
+        "first_name": "string (User display name)",
+        "language": "string (User language code e.g. 'en', 'id')",
+        "created_at": "string (ISO 8601 timestamp)",
+        "last_active": "string (ISO 8601 timestamp)"
+      }
+    },
+    "admins": {
+      "description": "Admin users with credentials to access Web Admin Panel",
+      "fields": {
+        "admin_id": "string (Unique admin ID)",
+        "username": "string (Email or root username)",
+        "password_hash": "string (Password verification hash)",
+        "role": "string ('superadmin' | 'admin' | 'manager')",
+        "created_at": "string (ISO 8601 timestamp)"
+      }
+    },
+    "products": {
+      "description": "Digital products catalog such as ChatGPT Plus, Claude Pro, VPN, API Accounts",
+      "fields": {
+        "product_id": "string (Unique product UUID)",
+        "title": "string (e.g. 'ChatGPT Plus 1 Month Private')",
+        "category": "string (e.g. 'OpenAI / ChatGPT', 'VPN', 'Streaming')",
+        "price_usd": "number (Price in USD e.g. 15.00)",
+        "price_idr": "number (Price in IDR e.g. 235000)",
+        "description": "string (Product specs, guarantee, delivery format)",
+        "image_url": "string (Optional preview badge/image)",
+        "created_at": "string (ISO 8601 timestamp)"
+      }
+    },
+    "stocks": {
+      "description": "Account inventory credentials stored in Email:Password:Cookie format",
+      "fields": {
+        "stock_id": "string (Unique stock ID)",
+        "product_id": "string (Foreign key to products)",
+        "account_data": "string ('Email:Password:Cookie' or token)",
+        "status": "string ('AVAILABLE' | 'SOLD')",
+        "order_id": "string (Assigned order ID once sold)",
+        "added_at": "string (ISO 8601 timestamp)",
+        "sold_at": "string (ISO 8601 timestamp)"
+      }
+    },
+    "orders": {
+      "description": "Purchase orders created through Telegram bots or checkout",
+      "fields": {
+        "order_id": "string (Unique invoice order code e.g. 'ORD-XXXXXX')",
+        "user_id": "string (Telegram user ID)",
+        "username": "string (Telegram @username)",
+        "product_id": "string (Product ID)",
+        "product_title": "string (Product title snapshot)",
+        "payment_method": "string ('crypto_auto' | 'crypto_manual')",
+        "payment_gateway": "string ('NOWPayments' | 'Cryptomus' | 'Manual')",
+        "payment_status": "string ('PENDING' | 'PAID' | 'CANCELLED' | 'VERIFIED_BY_ADMIN')",
+        "crypto_address": "string (Assigned deposit address or manual wallet address)",
+        "crypto_network": "string (Network code e.g. 'USDTTRC20', 'BTC', 'SOL')",
+        "amount": "number (Amount required)",
+        "currency": "string ('USD' | 'USDT' | 'IDR')",
+        "payment_id": "string (NOWPayments invoice ID / payment ID)",
+        "account_delivered": "string (Delivered credential string)",
+        "created_at": "string (ISO 8601 timestamp)",
+        "updated_at": "string (ISO 8601 timestamp)"
+      }
+    },
+    "crypto_wallets": {
+      "description": "Manual cryptocurrency deposit addresses",
+      "fields": {
+        "wallet_id": "string (Unique ID)",
+        "network": "string ('USDT (TRC20)', 'USDT (BEP20)', 'BTC (Bitcoin)', 'SOL (Solana)')",
+        "address": "string (Deposit blockchain address)",
+        "qr_url": "string (URL to QR code image)",
+        "is_active": "boolean (true | false)"
+      }
+    },
+    "bot_tokens": {
+      "description": "Multi-token configuration for running concurrent Telegram bots",
+      "fields": {
+        "token_id": "string (Unique token record ID)",
+        "bot_token": "string (BotFather token e.g. '123456:ABC-DEF...')",
+        "bot_name": "string (Friendly name or @bothandle)",
+        "is_active": "boolean (true | false)",
+        "status": "string ('online' | 'stopped' | 'error')",
+        "last_sync": "string (ISO 8601 timestamp)"
+      }
+    },
+    "settings": {
+      "description": "Global shop settings, welcome copy, audio alerts, and API gateways",
+      "fields": {
+        "key": "string ('welcome_text' | 'terms_text' | 'audio_alert_url' | 'nowpayments_api_key' | 'nowpayments_ipn_secret' | 'gemini_translate')",
+        "value": "string | any",
+        "language": "string ('id' | 'en' | 'all')"
+      }
+    },
+    "user_sessions": {
+      "description": "Active session tracker enabling single-active-message clean UI",
+      "fields": {
+        "telegram_id": "string (User Telegram ID)",
+        "last_message_id": "number (ID of message to be cleaned up)",
+        "current_state": "string ('idle' | 'selecting_product' | 'awaiting_payment')",
+        "active_order_id": "string (ID of currently pending order)",
+        "updated_at": "string (ISO 8601 timestamp)"
+      }
+    }
+  }
+}

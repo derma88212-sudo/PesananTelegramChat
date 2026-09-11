@@ -1,0 +1,106 @@
+{
+  "admins": [
+    {
+      "admin_id": "admin_root",
+      "username": "admin",
+      "password_hash": "kuda2017",
+      "role": "superadmin",
+      "created_at": "2026-09-11T10:58:30.204Z"
+    },
+    {
+      "username": "ilhammansiz",
+      "password_hash": "ilham88",
+      "role": "superadmin",
+      "telegram_id": "7380898545",
+      "admin_id": "adm_1789127135261",
+      "created_at": "2026-09-11T11:45:35.261Z"
+    }
+  ],
+  "products": [],
+  "stocks": [],
+  "orders": [],
+  "wallets": [],
+  "payment_methods": [
+    {
+      "id": "pm_qris",
+      "type": "qris",
+      "name": "QRIS All Payment (Gojek, OVO, Dana, Shopee, BCA)",
+      "account_number": "00020101021126580014ID.LINKAJA.WWW",
+      "account_name": "TOKO DIGITAL INDONESIA",
+      "qr_image_url": "https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=00020101021126580014ID.LINKAJA.WWW01189360052300000000005204581253033605802ID5920TOKO%20DIGITAL%20RESMI6013JAKARTA%20PUSAT6304C92B",
+      "instructions": "Scan QRIS menggunakan BCA Mobile, GoPay, DANA, OVO, atau ShopeePay. Pastikan nominal transfer sesuai dengan total tagihan termasuk 3 digit kode unik.",
+      "scope": "indonesia",
+      "is_active": true,
+      "created_at": "2026-09-11T10:58:30.204Z"
+    },
+    {
+      "id": "pm_dana",
+      "type": "ewallet",
+      "name": "DANA E-Wallet",
+      "account_number": "081298765432",
+      "account_name": "ADMIN TOKO DIGITAL",
+      "qr_image_url": "",
+      "instructions": "Transfer ke nomor DANA di atas. Lampirkan tangkapan layar (screenshot) bukti transfer sukses ke chat bot.",
+      "scope": "indonesia",
+      "is_active": true,
+      "created_at": "2026-09-11T10:58:30.204Z"
+    },
+    {
+      "id": "pm_gopay",
+      "type": "ewallet",
+      "name": "GoPay / Gojek",
+      "account_number": "081298765432",
+      "account_name": "ADMIN TOKO DIGITAL",
+      "qr_image_url": "",
+      "instructions": "Transfer ke GoPay di atas. Lampirkan tangkapan layar bukti transfer.",
+      "scope": "indonesia",
+      "is_active": true,
+      "created_at": "2026-09-11T10:58:30.204Z"
+    },
+    {
+      "id": "pm_bca",
+      "type": "bank",
+      "name": "Bank Central Asia (BCA)",
+      "account_number": "8820192831",
+      "account_name": "PT TOKO DIGITAL INDONESIA",
+      "qr_image_url": "",
+      "instructions": "Transfer ke rekening BCA di atas. Sertakan nomor pesanan di berita transfer.",
+      "scope": "indonesia",
+      "is_active": true,
+      "created_at": "2026-09-11T10:58:30.204Z"
+    },
+    {
+      "id": "pm_usdt_trc20",
+      "type": "crypto",
+      "name": "USDT (TRC-20)",
+      "account_number": "TYDzsYUEpvnYmQCWt6VbJ2tYgB5Gsmz7kK",
+      "account_name": "USDT TRC20 Wallet",
+      "qr_image_url": "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=TYDzsYUEpvnYmQCWt6VbJ2tYgB5Gsmz7kK",
+      "instructions": "Send exact USDT to the TRC20 address. Paste Transaction Hash (TXID) after sending.",
+      "scope": "global",
+      "is_active": true,
+      "created_at": "2026-09-11T10:58:30.204Z"
+    }
+  ],
+  "channels": [
+    {
+      "channel_id": "ch_official",
+      "name": "📢 Channel Resmi Toko Digital",
+      "username": "pandauserbot",
+      "invite_link": "https://t.me/pandauserbot",
+      "description": "Pusat update katalog produk, garansi, flash sale & pengumuman resmi.",
+      "source_tag": "official_channel",
+      "is_active": true,
+      "clicks_count": 0,
+      "orders_count": 0,
+      "created_at": "2026-09-11T11:21:18.176Z",
+      "updated_at": "2026-09-11T11:21:18.176Z"
+    }
+  ],
+  "bot_tokens": [],
+  "settings": {
+    "welcome_text": "🤖 Selamat Datang di Toko Akun Digital!",
+    "terms_text": "Garansi resmi 30 hari replace penuh.",
+    "nowpayments_sandbox": true
+  }
+}
