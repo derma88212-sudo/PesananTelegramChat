@@ -2136,6 +2136,7 @@ Respond ONLY with valid JSON in this exact structure:
 });
 
 // 11. Broadcast Engine APIs
+// 11. Broadcast Engine APIs
 app.post('/api/broadcast/start', async (req, res) => {
   try {
     const { message, photo_url, target_language, button_label, button_url } = req.body;
@@ -2143,13 +2144,13 @@ app.post('/api/broadcast/start', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
     }
 
-    const result = await runBroadcast(dbService, {
+    const result = await runBroadcast(bot, dbService, {
       message,
       photoUrl: photo_url,
       targetLanguage: target_language || 'ALL',
       buttonLabel: button_label,
       buttonUrl: button_url
-    });
+    }, undefined);
 
     res.json({ success: true, ...result });
   } catch (err: any) {
@@ -2174,6 +2175,7 @@ app.get('/api/broadcast/status', (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
 
 // 12. Webhooks Handlers
 // NOWPayments Automatic Crypto Callback Receiver
