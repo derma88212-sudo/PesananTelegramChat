@@ -1647,7 +1647,7 @@ app.get('/api/bots', async (req, res) => {
       return {
         ...t,
         status: activeInfo ? activeInfo.status : (t.status || 'stopped'),
-        is_running: activeInfo?.status === 'online'
+        running: activeInfo?.status === 'online'
       };
     });
     res.json({ success: true, data: list });
@@ -2142,7 +2142,7 @@ app.post('/api/broadcast/start', async (req, res) => {
     if (!message) return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
 
     const status = getBroadcastStatus();
-    if (status.is_running) {
+    if (status.running) {
       return res.status(400).json({ success: false, message: 'Proses broadcast sedang berjalan.' });
     }
 
