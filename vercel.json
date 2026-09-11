@@ -11,11 +11,15 @@
   },
   "rewrites": [
     {
+      "source": "/api",
+      "destination": "/api/index.ts"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/|assets/|favicon|manifest|icon|apple-touch|.*\\.[a-zA-Z0-9]+$).*)",
+      "source": "/((?!assets/|favicon|manifest|icon|apple-touch|.*\\.[a-zA-Z0-9]+$).*)",
       "destination": "/index.html"
     }
   ]
