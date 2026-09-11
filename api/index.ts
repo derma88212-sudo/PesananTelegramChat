@@ -1,16 +1,9 @@
 import app from '../server';
 
-// Vercel serverless function entrypoint.
-// On a cold start we run a one-time bootstrap (DB seeding + bot webhook setup)
-// so the whole application works automatically the moment it is deployed,
-// without any manual step. Errors are swallowed so a failed bootstrap never
-// breaks API responses (login & panel must always stay reachable).
 let bootstrapPromise: Promise<void> | null = null;
 
 function ensureBootstrapped(req?: any, res?: any): Promise<void> {
   if (!bootstrapPromise) {
-    // Memeriksa apakah ada fungsi bootstrapServerless yang ditempelkan ke app
-    // atau jika app/server.ts itu sendiri berupa fungsi bootstrap.
     const bootstrapFn = (app as any)?.bootstrapServerless || (typeof app === 'function' ? app : null);
 
     if (typeof bootstrapFn === 'function') {
@@ -29,5 +22,7 @@ function ensureBootstrapped(req?: any, res?: any): Promise<void> {
 
 export default async function handler(req: any, res: any) {
   await ensureBootstrapped(req, res);
-  return (app as any)(req, res);
+
+  // Meneruskan request ke Express app yang ada di server.ts
+  return app(req, res);
 }
