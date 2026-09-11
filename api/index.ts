@@ -1,4 +1,4 @@
-import * as server from '../server';
+import * from '../server.js';
 
 // Vercel serverless function entrypoint.
 // On a cold start we run a one-time bootstrap (DB seeding + bot webhook setup)
