@@ -4,7 +4,7 @@
   "installCommand": "npm install",
   "outputDirectory": "dist",
   "functions": {
-    "api/index.ts": {
+    "server.ts": {
       "maxDuration": 60,
       "memory": 1024,
       "includeFiles": "*.ts"
@@ -13,7 +13,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.ts"
+      "destination": "/server.ts"
     },
     {
       "source": "/((?!api/|assets/|favicon|manifest|icon|apple-touch|.*\\.[a-zA-Z0-9]+$).*)",
