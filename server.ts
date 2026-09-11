@@ -47,10 +47,20 @@ import {
 } from './multi_db.js';
 import fs from 'fs';
 import crypto from 'crypto';
+import cors from 'cors';
 
 dotenv.config();
 
 const app = express();
+app.use(cors({
+  origin: (origin, callback) => {
+    // Membolehkan request tanpa origin (seperti mobile app, curl, Postman) atau semua origin
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 const PORT = Number(process.env.PORT) || 3000;
 
 // Minimal shape of the order fields the Telegram notification helpers rely on.
