@@ -42,7 +42,6 @@ COPY --from=builder /app/supabase_schema.sql ./supabase_schema.sql
 
 # Buat folder data untuk penyimpanan lokal JSON
 RUN mkdir -p /app/data
-VOLUME ["/app/data"]
 
 # Buka port — dibaca otomatis oleh Render/Koyeb/Railway
 EXPOSE ${PORT}
