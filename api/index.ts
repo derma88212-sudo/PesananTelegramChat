@@ -1,5 +1,5 @@
-import app from '../server.ts';
-import { bootstrapServerless } from '../server.ts';
+import app from '../server';
+import { bootstrapServerless } from '../server';
 
 // Vercel serverless function entrypoint.
 // On a cold start we run a one-time bootstrap (DB seeding + bot webhook setup)
