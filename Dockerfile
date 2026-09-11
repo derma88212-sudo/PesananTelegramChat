@@ -1,43 +1,61 @@
 # =============================================================================
-# Multi-stage Dockerfile for Telegram Digital Goods Store & Admin Panel
-# Works for both VPS deployment (long-polling bot) and general Node hosting.
+# Universal Dockerfile — Bisa dipakai di SEMUA Platform
+# ✅ Vercel | ✅ Render | ✅ Koyeb | ✅ Railway | ✅ Fly.io | ✅ VPS
 # =============================================================================
 
-# --- Stage 1: Build (dependencies + frontend bundle + server bundle) ---
+# --- Stage 1: Builder — Pasang Semua Dependensi & Bangun ---
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching
+# Salin berkas dependensi dulu untuk cache yang lebih baik
 COPY package*.json ./
+
+# Pasang SEMUA paket (termasuk devDependencies untuk proses build)
 RUN npm install --no-audit --no-fund
 
-# Copy source and build
+# Salin seluruh kode sumber
 COPY . .
+
+# Bangun frontend/TypeScript sesuai konfigurasi
 RUN npm run build
 
-# --- Stage 2: Runtime (slim image, production deps only) ---
+# --- Stage 2: Runtime — Hanya Pakai Yang Diperlukan ---
 FROM node:20-alpine AS runner
 
 WORKDIR /app
+
+# Variabel lingkungan standar
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOST=0.0.0.0
 
-# Production dependencies only
+# Pasang hanya dependensi produksi
 COPY package*.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-# Copy built artifacts and runtime sources needed by dist/server.cjs
+# Salin hasil bangun dari tahap builder
 COPY --from=builder /app/dist ./dist
+
+# Salin berkas pendukung yang diperlukan
 COPY --from=builder /app/supabase_schema.sql ./supabase_schema.sql
 
-# Persistent local data directory (JSON fallback store)
+# Buat folder data untuk penyimpanan lokal JSON
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
-EXPOSE 3000
+# Buka port — dibaca otomatis oleh Render/Koyeb/Railway
+EXPOSE ${PORT}
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# Cek kesehatan — diperbaiki agar kompatibel semua lingkungan
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD node -e "
+    const http = require('http');
+    const port = process.env.PORT || 3000;
+    http.get(\`http://127.0.0.1:\${port}/api/health\`, (res) => {
+      process.exit(res.statusCode === 200 ? 0 : 1);
+    }).catch(() => process.exit(1));
+  "
 
-CMD ["node", "dist/server.cjs"]
+# Perintah jalankan — kompatibel .js maupun .cjs/.mjs
+CMD ["node", "dist/server.ts"]
