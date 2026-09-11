@@ -1,26 +1,18 @@
 {
-  "version": 2,
-  "buildCommand": "npm run build:vercel",
-  "installCommand": "npm install",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/index.ts": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/api",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/((?!assets/|favicon|manifest|icon|apple-touch|.*\\.[a-zA-Z0-9]+$).*)",
-      "destination": "/index.html"
-    }
-  ]
-}
+   "version": 2,
+   "buildCommand": "npm run build",
+   "outputDirectory": "dist",
+   "devCommand": "npm run dev",
+   "installCommand": "npm install",
+   "framework": "vite",
+   "rewrites": [
+     { "source": "/api/(.*)", "destination": "/api/$1" },
+     { "source": "/(.*)", "destination": "/index.html" }
+   ],
+   "functions": {
+     "api/**/*.js": {
+       "maxDuration": 30
+     }
+   },
+   "regions": ["sin1", "hnd1"]
+ }
