@@ -884,8 +884,7 @@ function evaluateCoupon(coupon: any, baseAmount: number): {
 }
 
 // Shared service: resolve a product, verify stock, then build & persist an order
-// for either manual crypto or automatic NOWPayments settlement. Returns a small
-// result object so callers can serialize it their own way (HTTP or simulation).
+// for either manual crypto or automatic NOWPayments settlement.
 type CreateOrderResult =
   | { kind: 'error'; ok: false; status: number; message: string }
   | { kind: 'invoice'; ok: true; type: 'invoice'; order: any; order_id: string; qr_url: string; token_url: string; instructions?: string };
@@ -968,8 +967,6 @@ async function createOrderFromProduct(params: {
   }
 
   // Automatic Payment (NOWPayments)
-  // HARD GUARD: never create an automatic-crypto order when the gateway is not
-  // connected — this prevents fake/unpayable orders in the database.
   if (typeof (cryptoGateway as any).isConfigured === 'function' && !(cryptoGateway as any).isConfigured()) {
     return { kind: 'error', ok: false, status: 503, message: 'Pembayaran otomatis kripto belum aktif (gateway belum terhubung). Silakan gunakan metode Bayar Manual.' };
   }
@@ -1073,7 +1070,6 @@ app.get('/api/orders/:id/receipt-image', async (req, res) => {
 
     const fileId = extractFileIdFromOrder(order);
 
-    // If order already has a direct external url, stream it straight through.
     if (!fileId && order.receipt_image_url && order.receipt_image_url.startsWith('http')) {
       return streamRemoteFile(order.receipt_image_url, res, {
         notFoundMessage: 'Tidak ada bukti gambar untuk pesanan ini.',
@@ -1159,7 +1155,6 @@ app.post('/api/orders/:id/approve', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
     }
 
-    // Atomically claim available stock if not delivered yet
     let deliveredAccount = order.account_delivered;
     if (!deliveredAccount) {
       try {
@@ -1181,7 +1176,6 @@ app.post('/api/orders/:id/approve', async (req, res) => {
       updated_at: new Date().toISOString()
     });
 
-    // Notify buyer directly on Telegram if bot is running
     sendTelegramDeliveryNotice({ ...order, order_id: orderId }, deliveredAccount).catch(() => {});
 
     const updated = await dbService.getOrder(orderId);
@@ -1192,7 +1186,7 @@ app.post('/api/orders/:id/approve', async (req, res) => {
   }
 });
 
-// Cancel Order: Sets status to CANCELLED, releases any reserved stock back to AVAILABLE, and notifies customer
+// Cancel Order: Sets status to CANCELLED, releases any reserved stock back to AVAILABLE
 app.post('/api/orders/:id/cancel', async (req, res) => {
   try {
     const orderId = req.params.id;
@@ -1201,7 +1195,6 @@ app.post('/api/orders/:id/cancel', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
     }
 
-    // Release any allocated stock item so it is available for other buyers
     try {
       await dbService.releaseClaimedStock(order.order_id);
     } catch (e: any) {
@@ -1213,7 +1206,6 @@ app.post('/api/orders/:id/cancel', async (req, res) => {
       updated_at: new Date().toISOString()
     });
 
-    // Notify customer on Telegram if available
     sendTelegramCancellationNotice(order, req.body?.reason).catch(() => {});
 
     const updated = await dbService.getOrder(orderId);
@@ -1235,14 +1227,11 @@ app.post('/api/orders/:id/reject', async (req, res) => {
       return res.json({ success: true, order_id: orderId, deleted: true, status: 'DELETED' });
     }
 
-    // Default to cancelling order cleanly
     const order = await dbService.getOrder(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
     }
 
-    // Release any allocated stock so it becomes available again. Never let a
-    // release failure block the rejection itself.
     try {
       await dbService.releaseClaimedStock(order.order_id);
     } catch (releaseErr: any) {
@@ -1280,10 +1269,10 @@ app.post('/api/orders/:id/reset', async (req, res) => {
   }
 });
 
-// Bulk reset completed orders (to PENDING or clear/purge)
+// Bulk reset completed orders
 app.post('/api/orders/reset-completed', async (req, res) => {
   try {
-    const mode = req.body?.mode || 'to_pending'; // 'to_pending' | 'purge'
+    const mode = req.body?.mode || 'to_pending';
     const count = await dbService.resetCompletedOrders(mode);
     res.json({ 
       success: true, 
@@ -1752,7 +1741,6 @@ app.post('/api/settings', async (req, res) => {
     const newSettings = req.body;
     await dbService.updateSettings(newSettings);
 
-    // Update crypto gateway instance with new keys
     if (newSettings.nowpayments_api_key !== undefined) {
       cryptoGateway.setCredentials(
         newSettings.nowpayments_api_key,
@@ -1845,7 +1833,6 @@ app.get('/api/export/:dataset', async (req, res) => {
       return res.send(csvString);
     }
 
-    // Default JSON
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
     return res.send(JSON.stringify(data, null, 2));
@@ -1854,7 +1841,7 @@ app.get('/api/export/:dataset', async (req, res) => {
   }
 });
 
-// 10. Admin Management (Root superadmin access)
+// 10. Admin Management
 app.get('/api/admins', async (req, res) => {
   try {
     const admins = await dbService.getAdmins();
@@ -1864,7 +1851,6 @@ app.get('/api/admins', async (req, res) => {
   }
 });
 
-// List known Telegram users (for choosing who may access the bot admin panel)
 app.get('/api/telegram-users', async (req, res) => {
   try {
     const users = await dbService.getUsers().catch(() => []);
@@ -1910,7 +1896,6 @@ app.post('/api/admins', async (req, res) => {
   }
 });
 
-// Link / update the Telegram ID for an admin (controls bot admin panel access)
 app.patch('/api/admins/:id/telegram', async (req, res) => {
   try {
     const requesterRole = (req.headers['x-admin-role'] as string) || req.body.requester_role;
@@ -1919,7 +1904,6 @@ app.patch('/api/admins/:id/telegram', async (req, res) => {
     }
     const { telegram_id } = req.body || {};
     await dbService.updateAdminTelegramId(req.params.id, telegram_id);
-    // Also reflect this in the local store so bot auth works even offline.
     try {
       const { setLocalAdminTelegramId } = await import('./multi_db.js');
       setLocalAdminTelegramId(req.params.id, telegram_id);
@@ -1951,7 +1935,7 @@ app.delete('/api/admins/:id', async (req, res) => {
   }
 });
 
-// 10.5 Multi-Language Translation APIs (Gemini 3.8 Flash + Dictionary Fallback)
+// 10.5 Multi-Language Translation APIs
 app.post('/api/translate/auto', async (req, res) => {
   try {
     const { text, type } = req.body;
@@ -2124,30 +2108,18 @@ Respond ONLY with valid JSON in this exact structure:
           model: 'gemini-3.8-flash',
           contents: prompt
         });
+
         const match = (response.text || '').match(/\{[\s\S]*\}/);
         if (match) {
           const parsed = JSON.parse(match[0]);
-          if (parsed.welcome) welcomeTranslations = parsed.welcome;
-          if (parsed.terms) termsTranslations = parsed.terms;
-          if (parsed.payment_guide) paymentGuideTranslations = parsed.payment_guide;
-          if (parsed.order_guide) orderGuideTranslations = parsed.order_guide;
+          welcomeTranslations = parsed.welcome || {};
+          termsTranslations = parsed.terms || {};
+          paymentGuideTranslations = parsed.payment_guide || {};
+          orderGuideTranslations = parsed.order_guide || {};
         }
       } catch (e: any) {
-        console.warn('Auto translate settings error, using fallback:', e.message);
+        console.warn('Auto translate settings error:', e.message);
       }
-    }
-
-    if (Object.keys(welcomeTranslations).length === 0) {
-      welcomeTranslations = { ...DEFAULT_WELCOME_TEXTS, id: welcome };
-    }
-    if (Object.keys(termsTranslations).length === 0) {
-      termsTranslations = { ...DEFAULT_TERMS_TEXTS, id: terms };
-    }
-    if (Object.keys(paymentGuideTranslations).length === 0) {
-      paymentGuideTranslations = { ...DEFAULT_PAYMENT_GUIDES, id: paymentGuide };
-    }
-    if (Object.keys(orderGuideTranslations).length === 0) {
-      orderGuideTranslations = { ...DEFAULT_ORDER_GUIDES, id: orderGuide };
     }
 
     await dbService.updateSettings({
@@ -2157,520 +2129,154 @@ Respond ONLY with valid JSON in this exact structure:
       order_guide_translations: orderGuideTranslations
     });
 
-    res.json({ 
-      success: true, 
-      welcome_translations: welcomeTranslations, 
-      terms_translations: termsTranslations,
-      payment_guide_translations: paymentGuideTranslations,
-      order_guide_translations: orderGuideTranslations
+    res.json({ success: true, message: 'Berhasil menerjemahkan seluruh teks toko ke 10 bahasa!' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// 11. Broadcast Engine APIs
+app.post('/api/broadcast/start', async (req, res) => {
+  try {
+    const { message, photo_url, target_language, button_label, button_url } = req.body;
+    if (!message) return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
+
+    const result = await runBroadcast({
+      message,
+      photoUrl: photo_url,
+      targetLanguage: target_language,
+      buttonLabel: button_label,
+      buttonUrl: button_url
     });
+
+    res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// Helper to verify NOWPayments HMAC signature.
-// NOWPayments signs the exact raw request bytes, so we hash the preserved
-// rawBody when available and only fall back to a sorted re-serialization
-// when the raw buffer was not captured.
-function verifyNowPaymentsHmac(payload: any, signature: string, ipnSecret: string, rawBody?: Buffer | string): boolean {
-  if (!ipnSecret || !signature) return true;
+app.post('/api/broadcast/stop', (req, res) => {
   try {
-    let signedPayload: string | Buffer;
-    if (rawBody !== undefined && rawBody !== null && String(rawBody).length > 0) {
-      signedPayload = rawBody;
-    } else {
-      const sortedKeys = Object.keys(payload || {}).sort();
-      const sortedObj: any = {};
-      for (const key of sortedKeys) {
-        sortedObj[key] = payload[key];
-      }
-      signedPayload = JSON.stringify(sortedObj);
-    }
-    const hmac = crypto.createHmac('sha512', ipnSecret);
-    hmac.update(signedPayload);
-    const digest = hmac.digest('hex');
-    return digest.toLowerCase() === signature.toLowerCase();
-  } catch (e) {
-    return false;
-  }
-}
-
-// 11. NOWPayments IPN Webhook Receiver (Supports both /api/webhook/nowpayments and /api/webhooks/nowpayments)
-const handleNowPaymentsWebhook = async (req: express.Request, res: express.Response) => {
-  try {
-    const signature = (req.headers['x-nowpayments-sig'] || '') as string;
-    const body = req.body || {};
-
-    console.log('[NOWPayments Webhook] Received payload:', body);
-
-    const settings = await dbService.getSettings() || {};
-    const ipnSecret = settings.nowpayments_ipn_secret || process.env.NOWPAYMENTS_IPN_SECRET || '';
-
-    // Verify HMAC signature if secret is provided
-    if (ipnSecret && signature) {
-      const isValid = verifyNowPaymentsHmac(body, signature, ipnSecret, (req as any).rawBody);
-      if (!isValid) {
-        console.warn('[NOWPayments Webhook] Invalid HMAC signature rejected.');
-        return res.status(403).json({ success: false, message: 'Invalid IPN signature' });
-      }
-    }
-
-    // Check payment status from payload ('finished', 'confirmed', 'waiting', etc.)
-    const paymentStatus = (body.payment_status || '').toLowerCase();
-    const orderId = body.order_id;
-
-    if (orderId && (paymentStatus === 'confirmed' || paymentStatus === 'finished')) {
-      const order = await dbService.getOrder(orderId);
-      if (order && order.payment_status !== 'PAID' && order.payment_status !== 'FINISHED' && order.payment_status !== 'APPROVED') {
-        // Atomic stock claim
-        const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
-        const delivered = stock && stock.account_data ? stock.account_data : 'Credential delivered via webhook';
-
-        await dbService.updateOrder(orderId, {
-          payment_status: 'FINISHED',
-          account_delivered: delivered,
-          payment_id: String(body.payment_id || order.payment_id || ''),
-          pay_amount: body.pay_amount || order.pay_amount,
-          actually_paid: body.actually_paid || order.actually_paid,
-          outcome_amount: body.outcome_amount,
-          pay_currency: body.pay_currency || order.crypto_currency,
-          updated_at: new Date().toISOString()
-        });
-        console.log(`[NOWPayments Webhook] Order ${orderId} marked as FINISHED & stock claimed!`);
-
-        // Send delivery notification to buyer's Telegram chat
-        sendTelegramDeliveryNotice({ ...order, order_id: orderId }, delivered).catch(() => {});
-      }
-    }
-
-    res.status(200).json({ status: 'received', order_id: orderId });
-  } catch (err: any) {
-    console.error('[NOWPayments Webhook] Error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-app.post('/api/webhook/nowpayments', handleNowPaymentsWebhook);
-app.post('/api/webhooks/nowpayments', handleNowPaymentsWebhook);
-
-// System Maintenance & Cleanup Endpoints
-app.post('/api/system/cleanup-cache', async (req, res) => {
-  try {
-    const result = await cleanSystemCache();
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.post('/api/system/cleanup-cancelled-orders', async (req, res) => {
-  try {
-    const result = await cleanCancelledOrders(dbService);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// Mass Broadcast Engine (rate-limited queue)
-app.post('/api/broadcast', async (req, res) => {
-  try {
-    const { message, delay_ms } = req.body || {};
-    if (!message || !String(message).trim()) {
-      return res.status(400).json({ success: false, message: 'Isi pesan broadcast tidak boleh kosong.' });
-    }
-    const result = await runBroadcast(dbService, activeBots, String(message), {
-      delayMs: Number(delay_ms) || 1000,
-      adminId: req.headers['x-admin-id'] || 'web_admin'
-    });
-    res.json(result);
+    const stopped = stopBroadcast();
+    res.json({ success: true, stopped });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 app.get('/api/broadcast/status', (req, res) => {
-  res.json({ success: true, data: getBroadcastStatus() });
-});
-
-app.post('/api/broadcast/stop', (req, res) => {
-  res.json(stopBroadcast());
-});
-
-app.post('/api/db/auto-migrate', async (req, res) => {
   try {
-    const result = await autoMigrateUniversalDatabase(dbService);
-    res.json(result);
+    res.json({ success: true, status: getBroadcastStatus() });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-app.post('/api/database/auto-migrate', async (req, res) => {
+// 12. NOWPayments IPN Webhook Handler
+app.post('/api/webhooks/nowpayments', async (req: any, res) => {
   try {
-    const result = await autoMigrateUniversalDatabase(dbService);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+    const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
+    const sigHeader = req.headers['x-nowpayments-sig'];
 
-// 12. Telegram Bot Web Simulation Endpoint
-// Enables immediate live testing of buyer flow right within the Admin Panel!
-// Each simulated action is an isolated handler receiving the shared simulation
-// context, so a single action can be read, changed and tested on its own.
-type SimulateContext = {
-  req: express.Request;
-  res: express.Response;
-  action: string;
-  tgId: string;
-  tgUser: string;
-  lang: string;
-  productId: string;
-  orderId: string;
-  body: any;
-};
-
-type SimulateHandler = (ctx: SimulateContext) => Promise<any>;
-
-async function simStart(ctx: SimulateContext) {
-  await dbService.upsertUser({
-    telegram_id: ctx.tgId,
-    username: ctx.tgUser,
-    language: ctx.lang,
-    last_active: new Date().toISOString()
-  });
-  const settings = await dbService.getSettings() || {};
-  const welcome = getLocalizedWelcome(settings, ctx.lang);
-  return {
-    success: true,
-    type: 'message',
-    text: welcome,
-    lang: ctx.lang,
-    menu: [
-      { id: 'catalog', label: getUI('menu_catalog', ctx.lang) },
-      { id: 'orders', label: getUI('menu_orders', ctx.lang) },
-      { id: 'payments', label: getUI('menu_payments', ctx.lang) },
-      { id: 'help', label: getUI('menu_help', ctx.lang) }
-    ]
-  };
-}
-
-async function simCatalog(ctx: SimulateContext) {
-  const products = await dbService.getProducts();
-  const enriched = await Promise.all(products.map(async (p: any) => {
-    const localized = getLocalizedProduct(p, ctx.lang);
-    const stockCount = await dbService.getAvailableStockCount(p.product_id);
-    return { ...localized, stocks: stockCount, is_out_of_stock: stockCount <= 0 };
-  }));
-  return {
-    success: true,
-    type: 'catalog',
-    prompt: getUI('catalog_select_prompt', ctx.lang),
-    products: enriched,
-    lang: ctx.lang
-  };
-}
-
-async function simHelp(ctx: SimulateContext) {
-  const settings = await dbService.getSettings() || {};
-  const terms = getLocalizedTerms(settings, ctx.lang);
-  return { success: true, type: 'message', text: terms, lang: ctx.lang };
-}
-
-async function simPayments(ctx: SimulateContext) {
-  const settings = await dbService.getSettings() || {};
-  const paymentGuide = getLocalizedPaymentGuide(settings, ctx.lang);
-  return { success: true, type: 'message', text: paymentGuide, lang: ctx.lang };
-}
-
-async function simOrders(ctx: SimulateContext) {
-  const settings = await dbService.getSettings() || {};
-  const orderGuide = getLocalizedOrderGuide(settings, ctx.lang);
-  const userOrders = await dbService.getUserOrders(ctx.tgId);
-  return { success: true, type: 'orders', text: orderGuide, orders: userOrders, lang: ctx.lang };
-}
-
-async function simSubmitTxid(ctx: SimulateContext) {
-  const { tx_hash } = ctx.body;
-  if (!ctx.orderId || !tx_hash) {
-    throw { status: 400, message: 'order_id and tx_hash are required' };
-  }
-  await dbService.updateOrder(ctx.orderId, { tx_hash, updated_at: new Date().toISOString() });
-  return { success: true, message: 'TXID saved successfully' };
-}
-
-async function simPayWallet(ctx: SimulateContext) {
-  const wId = ctx.body.wallet_id || (ctx.body.wallet && (ctx.body.wallet.wallet_id || ctx.body.wallet.id));
-  const pId = ctx.body.product_id || ctx.productId;
-
-  const result = await createOrderFromProduct({
-    productId: pId,
-    userId: ctx.tgId,
-    username: ctx.tgUser,
-    lang: ctx.lang,
-    paymentMethod: 'crypto_manual',
-    walletId: wId
-  });
-
-  if (result.kind === 'error') throw { status: result.status, message: result.message };
-  return {
-    success: true,
-    type: 'invoice',
-    order: result.order,
-    instructions: result.instructions,
-    qr_url: result.qr_url,
-    token_url: result.token_url
-  };
-}
-
-async function simSelectWallet() {
-  const wallets = await dbService.getActiveCryptoWallets();
-  return { success: true, type: 'select_wallet', wallets: wallets || [] };
-}
-
-async function simBuyAuto(ctx: SimulateContext) {
-  const result = await createOrderFromProduct({
-    productId: ctx.productId,
-    userId: ctx.tgId,
-    username: ctx.tgUser,
-    lang: ctx.lang,
-    paymentMethod: 'crypto_auto'
-  });
-
-  if (result.kind === 'error') throw { status: result.status, message: result.message };
-  return {
-    success: true,
-    type: 'invoice',
-    order: result.order,
-    instructions: result.instructions,
-    qr_url: result.qr_url,
-    token_url: result.token_url
-  };
-}
-
-async function simCheckPayment(ctx: SimulateContext) {
-  const order = await dbService.getOrder(ctx.orderId);
-  if (!order) throw { status: 404, message: 'Order not found' };
-
-  const orderLang = order.user_lang || ctx.lang;
-
-  // STRICT VERIFICATION: If not verified/paid, reject delivery!
-  if (order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
-    return {
-      success: false,
-      status: order.payment_status,
-      message: getUI('payment_pending_notice', orderLang),
-      account: null
-    };
-  }
-
-  // If PAID, ensure atomic stock claim if not delivered yet
-  let delivered = order.account_delivered;
-  if (!delivered) {
-    const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
-    if (stock && stock.account_data) {
-      delivered = stock.account_data;
-      await dbService.updateOrder(order.order_id, {
-        account_delivered: delivered,
-        updated_at: new Date().toISOString()
-      });
-    }
-  }
-
-  return {
-    success: true,
-    status: 'PAID',
-    account: delivered,
-    parsed: parseAccountCredential(delivered || ''),
-    message: getUI('payment_success_header', orderLang),
-    warranty_tip: getUI('warranty_tip', orderLang)
-  };
-}
-
-async function simSimulatePay(ctx: SimulateContext) {
-  const order = await dbService.getOrder(ctx.orderId);
-  if (!order) throw { status: 404, message: 'Order not found' };
-
-  const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
-  const delivered = stock && stock.account_data ? stock.account_data : 'Credential delivered via simulation';
-
-  await dbService.updateOrder(ctx.orderId, {
-    payment_status: 'PAID',
-    account_delivered: delivered,
-    updated_at: new Date().toISOString()
-  });
-
-  const orderLang = order.user_lang || ctx.lang;
-  return {
-    success: true,
-    status: 'PAID',
-    account: delivered,
-    parsed: parseAccountCredential(delivered),
-    message: getUI('payment_success_header', orderLang)
-  };
-}
-
-async function simCancelOrder(ctx: SimulateContext) {
-  if (ctx.orderId) {
-    await dbService.deleteOrder(ctx.orderId);
-  }
-  return { success: true, message: 'Pesanan telah dibatalkan & otomatis dihapus dari penyimpanan.' };
-}
-
-// Dispatch table: single source of truth for the simulated buyer-flow actions.
-const SIMULATE_ACTIONS: Record<string, SimulateHandler> = {
-  start: simStart,
-  catalog: simCatalog,
-  help: simHelp,
-  payments: simPayments,
-  orders: simOrders,
-  submit_txid: simSubmitTxid,
-  pay_wallet: simPayWallet,
-  buy_manual: async (ctx) => {
-    const hasWallet = ctx.body.wallet_id || ctx.body.wallet;
-    return hasWallet ? simPayWallet(ctx) : simSelectWallet();
-  },
-  buy_auto: simBuyAuto,
-  check_payment: simCheckPayment,
-  simulate_pay: simSimulatePay,
-  cancel_order: simCancelOrder
-};
-
-app.post('/api/bot/simulate', async (req, res) => {
-  try {
-    const { action, telegram_id, username, product_id, order_id, user_lang } = req.body;
-
-    const handler = SIMULATE_ACTIONS[action];
-    if (!handler) {
-      return res.status(400).json({ success: false, message: 'Unknown action' });
-    }
-
-    const ctx: SimulateContext = {
-      req,
-      res,
-      action,
-      tgId: telegram_id || 'sim_user_9981',
-      tgUser: username || 'tester_buyer',
-      lang: user_lang || 'id',
-      productId: product_id,
-      orderId: order_id,
-      body: req.body
-    };
-
-    const payload = await handler(ctx);
-    return res.json(payload);
-  } catch (err: any) {
-    const status = typeof err?.status === 'number' ? err.status : 500;
-    res.status(status).json({ success: false, message: err?.message || String(err) });
-  }
-});
-
-// --- STATIC SERVING FOR PRODUCTION / SERVERLESS (Vercel) ---
-// On Vercel, startServer() is skipped and the exported Express app handles each
-// request, so we must register the built frontend here at module scope. This
-// block is registered AFTER all /api routes, so API endpoints always win.
-const DIST_PATH = path.join(process.cwd(), 'dist');
-const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-
-if (isProduction) {
-  app.use(express.static(DIST_PATH));
-  // SPA fallback: serve index.html for any non-API GET route (client routing).
-  app.get(/^(?!\/api\/).*/, (req, res) => {
-    res.sendFile(path.join(DIST_PATH, 'index.html'));
-  });
-}
-
-// --- VITE MIDDLEWARE (LOCAL DEV) & SERVER START ---
-async function startServer() {
-  // Ensure database seeding
-  await dbService.ensureSeeded();
-
-  // Initialize background multi-bot runner from Firestore
-  startMultiBotManager(dbService).catch(err => {
-    console.error('[BotManager] Startup error:', err.message);
-  });
-
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    // Express static + SPA fallback already registered above.
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Server] Telegram Digital Shop & Admin Panel running at http://0.0.0.0:${PORT}`);
-  });
-}
-
-// --- TELEGRAM WEBHOOK RECEIVER (serverless / Vercel mode) ---
-// Each active bot registers a webhook at /api/telegram/webhook/:tokenId so
-// updates are pushed here instead of long polling. Locally this route is unused
-// because long polling handles the bot instead.
-app.post('/api/telegram/webhook/:tokenId', async (req, res) => {
-  try {
-    const tokenId = req.params.tokenId;
-    let instance = (activeBots as any).get(tokenId);
-
-    // Cold start may not have the bot instance yet — spin it up on demand.
-    if (!instance) {
-      try {
-        const tokens = await dbService.getBotTokens();
-        const tokenRecord = tokens.find((t: any) => t.token_id === tokenId);
-        if (tokenRecord && tokenRecord.bot_token) {
-          await launchSingleBot(tokenRecord, dbService);
-          instance = (activeBots as any).get(tokenId);
-        }
-      } catch (e: any) {
-        console.warn('[Webhook] On-demand bot launch note:', e.message);
+    if (ipnSecret && sigHeader && req.rawBody) {
+      const hmac = crypto.createHmac('sha512', ipnSecret);
+      hmac.update(req.rawBody);
+      const calculatedSig = hmac.digest('hex');
+      if (calculatedSig !== sigHeader) {
+        return res.status(400).json({ error: 'Invalid IPN Signature' });
       }
     }
 
-    if (instance?.bot) {
-      await instance.bot.handleUpdate(req.body);
+    const { payment_status, order_id, pay_amount, outcome_amount } = req.body;
+    if (!order_id) return res.status(400).send('Missing order_id');
+
+    if (payment_status === 'finished' || payment_status === 'confirmed') {
+      const order = await dbService.getOrder(order_id);
+      if (order && order.payment_status !== 'PAID' && order.payment_status !== 'VERIFIED_BY_ADMIN') {
+        let deliveredAccount = order.account_delivered;
+        if (!deliveredAccount) {
+          try {
+            const stock: any = await dbService.claimAvailableStock(order.product_id, order.order_id);
+            if (stock && stock.account_data) {
+              deliveredAccount = stock.account_data;
+            } else {
+              deliveredAccount = 'Akun fisik belum tersedia di stok. Admin akan segera mengirimkannya.';
+            }
+          } catch (e: any) {
+            deliveredAccount = 'Akun siap dikirim manual oleh admin.';
+          }
+        }
+
+        await dbService.updateOrder(order_id, {
+          payment_status: 'PAID',
+          account_delivered: deliveredAccount,
+          updated_at: new Date().toISOString()
+        });
+
+        sendTelegramDeliveryNotice({ ...order, order_id }, deliveredAccount).catch(() => {});
+      }
     }
-    // Always ACK so Telegram does not retry endlessly.
-    res.status(200).json({ ok: true });
+
+    res.json({ status: 'ok' });
   } catch (err: any) {
-    console.error('[Webhook] Error:', err.message);
-    res.status(200).json({ ok: true });
+    console.error('[NOWPayments Webhook Error]:', err.message);
+    res.status(500).send('Internal Server Error');
   }
 });
 
-let serverlessBootstrapped = false;
-
-/**
- * One-time bootstrap used by serverless deployments (Vercel).
- * Seeds the database and registers Telegram webhooks so the whole application
- * works automatically right after a GitHub import + deploy.
- */
-export async function bootstrapServerless(): Promise<void> {
-  if (serverlessBootstrapped) return;
-  serverlessBootstrapped = true;
-
+// 13. Telegram Webhook Endpoint per-Bot Token
+app.post('/api/telegram/webhook/:tokenId', async (req, res) => {
   try {
-    await dbService.ensureSeeded();
-  } catch (e: any) {
-    console.warn('[Bootstrap] ensureSeeded note:', e.message);
+    const { tokenId } = req.params;
+    const botInstance = activeBots.get(tokenId);
+    if (botInstance && botInstance.bot) {
+      await botInstance.bot.handleUpdate(req.body, res);
+    } else {
+      res.status(404).send('Bot engine not found or offline');
+    }
+  } catch (err: any) {
+    console.error('[Telegram Webhook Error]:', err.message);
+    if (!res.headersSent) {
+      res.status(500).send('Error processing webhook');
+    }
   }
+});
 
-  try {
-    await initializeWebhooks(dbService, process.env.APP_URL || process.env.VERCEL_URL || '');
-  } catch (e: any) {
-    console.warn('[Bootstrap] Webhook setup note:', e.message);
+// Auto-start multi-bot polling engine on launch
+startMultiBotManager(dbService).catch(err => {
+  console.warn('[Multi-Bot Engine] Startup warning:', err.message);
+});
+
+// Auto-migration & Database verification
+autoMigrateUniversalDatabase(dbService).catch(err => {
+  console.warn('[Universal DB Auto-Migrate] Warning:', err.message);
+});
+
+// --- VITE FRONTEND MIDDLEWARE (Development / Production Setup) ---
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  createViteServer({
+    server: { middlewareMode: true },
+    appType: 'spa'
+  }).then(vite => {
+    app.use(vite.middlewares);
+  });
+} else {
+  const distPath = path.join(process.cwd(), 'dist');
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api')) return next();
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
 }
 
-// In standard container / local mode, start the server (long polling).
-// In Vercel serverless environment, the exported handler is invoked per request
-// and bootstrapServerless() runs on the first request instead.
+// Start standalone HTTP Server only when NOT in Vercel Serverless environment
 if (!process.env.VERCEL) {
-  startServer();
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server berjalan di http://0.0.0.0:${PORT}`);
+  });
 }
 
-export { app };
+// ALWAYS export default Express app for Vercel Serverless Function compatibility
 export default app;
