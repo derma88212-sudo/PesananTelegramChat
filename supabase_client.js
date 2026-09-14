@@ -6,16 +6,30 @@ import path from 'path';
 let supabaseClient = null;
 
 /**
+ * Helper internal untuk mengambil Environment Variable dari berbagai platform
+ * (Vercel, Railway, Vite, Next.js, CRA, VPS, dll.)
+ */
+function getEnv(key) {
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env[key]) return process.env[key];
+    if (process.env[`VITE_${key}`]) return process.env[`VITE_${key}`];
+    if (process.env[`NEXT_PUBLIC_${key}`]) return process.env[`NEXT_PUBLIC_${key}`];
+    if (process.env[`REACT_APP_${key}`]) return process.env[`REACT_APP_${key}`];
+  }
+  return '';
+}
+
+/**
  * Returns a configured Supabase client or null if env is not provided.
  * Uses lazy initialization so that missing credentials never crash the server.
  */
 export function getSupabase() {
   if (supabaseClient) return supabaseClient;
 
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || 
-              process.env.SUPABASE_ANON_KEY || 
-              process.env.VITE_SUPABASE_ANON_KEY || '';
+  const url = getEnv('SUPABASE_URL');
+  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY') || 
+              getEnv('SUPABASE_ANON_KEY') || 
+              getEnv('SUPABASE_KEY');
 
   if (!url || !key) {
     return null;
@@ -36,32 +50,44 @@ export function getSupabase() {
 }
 
 export function isSupabaseEnabled() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  const url = getEnv('SUPABASE_URL');
+  const key = getEnv('SUPABASE_SERVICE_ROLE_KEY') || getEnv('SUPABASE_ANON_KEY') || getEnv('SUPABASE_KEY');
   return Boolean(url && key && url.startsWith('http'));
 }
 
 /**
  * Executes a raw SQL query or multi-statement DDL against Supabase.
  * Supports:
- * 1. Direct PostgreSQL connection via SUPABASE_DB_URL or DATABASE_URL (instant 1-click DDL)
+ * 1. Direct PostgreSQL connection via SUPABASE_DB_URL, DATABASE_URL, POSTGRES_URL, etc.
  * 2. Supabase pg/query REST API using SUPABASE_SERVICE_ROLE_KEY
  */
 export async function executeSupabaseSql(sqlQuery) {
-  const dbUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  // Dukungan komprehensif untuk string koneksi database dari Railway, Vercel, Heroku, VPS, dll.
+  const dbUrl = process.env.SUPABASE_DB_URL || 
+                process.env.DATABASE_URL || 
+                process.env.DATABASE_PRIVATE_URL || 
+                process.env.POSTGRES_URL || 
+                process.env.POSTGRES_URL_NON_POOLING;
+
+  const supabaseUrl = getEnv('SUPABASE_URL');
+  const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY') || getEnv('SUPABASE_ANON_KEY');
 
   // 1. Try direct PostgreSQL connection if connection string is provided
   if (dbUrl) {
+    let client;
     try {
-      const client = new pg.Client({
+      const isSSLRequired = !dbUrl.includes('localhost') && !dbUrl.includes('127.0.0.1');
+      
+      client = new pg.Client({
         connectionString: dbUrl,
-        ssl: { rejectUnauthorized: false }
+        connectionTimeoutMillis: 10000,
+        ssl: isSSLRequired ? { rejectUnauthorized: false } : false
       });
+      
       await client.connect();
       const res = await client.query(sqlQuery);
       await client.end();
+      
       return {
         success: true,
         method: 'direct_postgres',
@@ -69,6 +95,9 @@ export async function executeSupabaseSql(sqlQuery) {
         message: 'SQL berhasil dieksekusi via direct PostgreSQL connection!'
       };
     } catch (pgErr) {
+      if (client) {
+        try { await client.end(); } catch (_) {}
+      }
       console.warn('[Supabase SQL] Direct PG attempt notice:', pgErr.message);
     }
   }
@@ -77,7 +106,11 @@ export async function executeSupabaseSql(sqlQuery) {
   if (supabaseUrl && serviceRoleKey) {
     try {
       const endpoint = `${supabaseUrl.replace(/\/$/, '')}/pg/query`;
-      const resp = await fetch(endpoint, {
+      
+      // Mendukung native fetch maupun cross-fetch / node-fetch di Node.js lama
+      const fetchApi = typeof fetch !== 'undefined' ? fetch : (await import('node-fetch')).default;
+
+      const resp = await fetchApi(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
