@@ -55,6 +55,7 @@ export const EnvVarsTab: React.FC<EnvVarsTabProps> = ({ currentLang = 'id' }) =>
       categorized: Record<string, EnvCategory>;
       flat: Record<string, string>;
     };
+    message?: string;
   }
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
