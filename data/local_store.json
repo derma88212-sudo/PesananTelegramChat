@@ -1,0 +1,37 @@
+{
+  "admins": [
+    {
+      "admin_id": "admin_root",
+      "username": "admin",
+      "password_hash": "kuda2017",
+      "role": "superadmin",
+      "created_at": "2026-09-11T10:58:30.204Z"
+    },
+    {
+      "username": "ilhammansiz",
+      "password_hash": "ilham88",
+      "role": "superadmin",
+      "telegram_id": "7380898545",
+      "admin_id": "adm_1789127135261",
+      "created_at": "2026-09-11T11:45:35.261Z"
+    },
+    {
+      "admin_id": "root_admin",
+      "username": "root@admin.com",
+      "password_hash": "kucing123",
+      "role": "superadmin",
+      "created_at": "2026-09-14T12:53:32.243Z"
+    }
+  ],
+  "products": [],
+  "stocks": [],
+  "orders": [],
+  "wallets": [],
+  "payment_methods": [],
+  "channels": [],
+  "bot_tokens": [],
+  "settings": {},
+  "broadcasts": [],
+  "broadcast_history": [],
+  "referral_links": []
+}

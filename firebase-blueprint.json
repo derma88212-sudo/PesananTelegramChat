@@ -1,0 +1,164 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Telegram user who interacts with the shop bot",
+      "type": "object",
+      "properties": {
+        "telegram_id": { "type": "string", "description": "Unique Telegram user ID" },
+        "username": { "type": "string", "description": "Telegram @username" },
+        "language": { "type": "string", "description": "ISO language code e.g. id, en" },
+        "created_at": { "type": "string", "description": "ISO timestamp of creation" }
+      },
+      "required": ["telegram_id", "language", "created_at"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Administrator account for web dashboard access",
+      "type": "object",
+      "properties": {
+        "admin_id": { "type": "string", "description": "Unique admin ID" },
+        "username": { "type": "string", "description": "Username or email" },
+        "password_hash": { "type": "string", "description": "Hashed password or token" },
+        "role": { "type": "string", "description": "Role: superadmin, admin, manager" }
+      },
+      "required": ["admin_id", "username", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Digital product or account category offered in shop",
+      "type": "object",
+      "properties": {
+        "product_id": { "type": "string", "description": "Unique product ID" },
+        "title": { "type": "string", "description": "Product name e.g. ChatGPT Plus 1 Month" },
+        "category": { "type": "string", "description": "Category e.g. AI Accounts, VPN, Streaming" },
+        "price_usd": { "type": "number", "description": "Price in USD for crypto payments" },
+        "price_idr": { "type": "number", "description": "Price in IDR for local display" },
+        "description": { "type": "string", "description": "Product details, warranty & terms" },
+        "created_at": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["product_id", "title", "category", "price_usd"]
+    },
+    "Stock": {
+      "title": "Stock",
+      "description": "Credentials stock of digital products (Email:Password:Cookie)",
+      "type": "object",
+      "properties": {
+        "stock_id": { "type": "string", "description": "Unique stock item ID" },
+        "product_id": { "type": "string", "description": "Referenced product ID" },
+        "account_data": { "type": "string", "description": "Account credentials e.g. email:pass:cookie" },
+        "status": { "type": "string", "enum": ["AVAILABLE", "SOLD"], "description": "Current status" },
+        "order_id": { "type": "string", "description": "Associated order ID if sold" }
+      },
+      "required": ["stock_id", "product_id", "account_data", "status"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Transaction order for a digital product",
+      "type": "object",
+      "properties": {
+        "order_id": { "type": "string", "description": "Unique order ID" },
+        "user_id": { "type": "string", "description": "Telegram user ID or buyer ID" },
+        "product_id": { "type": "string", "description": "Product ID purchased" },
+        "product_title": { "type": "string", "description": "Title of product purchased" },
+        "payment_method": { "type": "string", "description": "crypto_auto (NOWPayments) or crypto_manual" },
+        "payment_status": { "type": "string", "enum": ["PENDING", "PAID", "CANCELLED", "VERIFIED_BY_ADMIN"] },
+        "crypto_address": { "type": "string", "description": "Crypto deposit address" },
+        "crypto_network": { "type": "string", "description": "Network e.g. USDT_TRC20, BTC, SOL" },
+        "amount": { "type": "number", "description": "Total payment amount" },
+        "payment_id": { "type": "string", "description": "Gateway transaction ID / Invoice ID" },
+        "account_delivered": { "type": "string", "description": "Account credential delivered" },
+        "created_at": { "type": "string", "description": "ISO timestamp" },
+        "updated_at": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["order_id", "user_id", "product_id", "payment_status", "amount"]
+    },
+    "CryptoWallet": {
+      "title": "CryptoWallet",
+      "description": "Manual cryptocurrency wallet address configuration",
+      "type": "object",
+      "properties": {
+        "wallet_id": { "type": "string", "description": "Unique wallet identifier" },
+        "network": { "type": "string", "description": "USDT (TRC20), USDT (BEP20), BTC, SOL, etc." },
+        "address": { "type": "string", "description": "Deposit wallet address" },
+        "qr_url": { "type": "string", "description": "QR code image URL" },
+        "is_active": { "type": "boolean", "description": "Whether wallet is active" }
+      },
+      "required": ["wallet_id", "network", "address", "is_active"]
+    },
+    "BotToken": {
+      "title": "BotToken",
+      "description": "Multi-token Telegram bot configuration",
+      "type": "object",
+      "properties": {
+        "token_id": { "type": "string", "description": "Unique token config ID" },
+        "bot_token": { "type": "string", "description": "Telegram Bot API token" },
+        "bot_name": { "type": "string", "description": "Friendly name or username of the bot" },
+        "is_active": { "type": "boolean", "description": "Whether bot runner is active" },
+        "status": { "type": "string", "description": "Online, offline, or error" }
+      },
+      "required": ["token_id", "bot_token", "is_active"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "System settings, text templates, audio alerts, and API keys",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "description": "Setting key e.g. welcome_text, nowpayments_api_key" },
+        "value": { "type": "string", "description": "Setting value" },
+        "language": { "type": "string", "description": "Language code if localized" }
+      },
+      "required": ["key", "value"]
+    },
+    "UserSession": {
+      "title": "UserSession",
+      "description": "User Telegram chat session to ensure clean UI auto-delete",
+      "type": "object",
+      "properties": {
+        "telegram_id": { "type": "string", "description": "Telegram chat/user ID" },
+        "last_message_id": { "type": "number", "description": "ID of previous bot message to delete" },
+        "current_state": { "type": "string", "description": "Active state or menu" },
+        "order_draft": { "type": "string", "description": "Temporary draft order data" }
+      },
+      "required": ["telegram_id"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of Telegram users"
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Collection of system administrators"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of digital products and account types"
+    },
+    "/stocks/{stockId}": {
+      "schema": "Stock",
+      "description": "Collection of available and sold account credentials"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of orders and transactions"
+    },
+    "/crypto_wallets/{walletId}": {
+      "schema": "CryptoWallet",
+      "description": "Manual crypto payment deposit wallets"
+    },
+    "/bot_tokens/{tokenId}": {
+      "schema": "BotToken",
+      "description": "Active Telegram bot tokens for multi-bot engine"
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "Configuration keys, welcome text, gateway settings"
+    },
+    "/user_sessions/{sessionId}": {
+      "schema": "UserSession",
+      "description": "Active session state and clean UI message tracker"
+    }
+  }
+}

@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel - Telegram ChatGPT & Digital Shop</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  </style>
+</head>
+<body class="bg-[#F8FAFC] text-slate-800 antialiased min-h-screen">
+
+  <!-- LOGIN OVERLAY -->
+  <div id="login-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white border border-slate-200 rounded-2xl shadow-xl w-full max-w-md p-8">
+      <div class="text-center mb-8">
+        <div class="w-14 h-14 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl shadow-sm">
+          <i class="fa-brands fa-telegram"></i>
+        </div>
+        <h1 class="text-2xl font-bold text-slate-900 tracking-tight">Root Admin Access</h1>
+        <p class="text-sm text-slate-500 mt-1">Telegram Shop & Multi-Bot Control Center</p>
+      </div>
+
+      <div id="login-error" class="hidden mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-medium"></div>
+
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Username / Email</label>
+          <input id="login-user" type="text" value="root@admin.com" required
+            class="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all text-sm" placeholder="root@admin.com" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Password</label>
+          <input id="login-pass" type="password" value="kucing123" required
+            class="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all text-sm" placeholder="••••••••" />
+        </div>
+        <div class="pt-2">
+          <button type="submit" class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white rounded-xl font-semibold shadow-sm transition-all text-sm flex items-center justify-center gap-2">
+            <i class="fa-solid fa-lock-open text-xs"></i> Masuk ke Admin Panel
+          </button>
+        </div>
+      </form>
+      <div class="mt-4 text-center text-xs text-slate-400">
+        Default: <span class="font-mono text-slate-600">root@admin.com</span> / <span class="font-mono text-slate-600">kucing123</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP CONTAINER -->
+  <div id="app-content" class="hidden min-h-screen flex flex-col">
+    <!-- TOP NAVIGATION -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-sm">
+            <i class="fa-brands fa-telegram"></i>
+          </div>
+          <div>
+            <span class="font-bold text-slate-900 text-base">Telegram Shop Admin</span>
+            <span class="ml-2 text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-medium">Firestore Live</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <button id="btn-sound-test" title="Test Audio Alert" class="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all text-sm flex items-center gap-1.5 border border-slate-200">
+            <i class="fa-solid fa-volume-high text-indigo-600"></i>
+            <span class="text-xs font-medium">Test Bell</span>
+          </button>
+
+          <div class="h-6 w-px bg-slate-200"></div>
+
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
+              AD
+            </div>
+            <span id="nav-user" class="text-sm font-medium text-slate-700">root@admin.com</span>
+          </div>
+
+          <button id="btn-logout" class="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all" title="Logout">
+            <i class="fa-solid fa-right-from-bracket"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- CONTENT BODY -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1">
+      
+      <!-- STATS OVERVIEW CARDS -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider">Total Pendapatan</span>
+            <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm">
+              <i class="fa-solid fa-dollar-sign"></i>
+            </div>
+          </div>
+          <div id="stat-revenue" class="text-2xl font-bold text-slate-900">$0.00</div>
+          <p class="text-xs text-slate-400 mt-1">Transaksi kripto terkonfirmasi</p>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider">Pesanan Pending</span>
+            <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-sm">
+              <i class="fa-solid fa-clock"></i>
+            </div>
+          </div>
+          <div id="stat-pending" class="text-2xl font-bold text-slate-900">0</div>
+          <p class="text-xs text-slate-400 mt-1">Menunggu pembayaran / approve</p>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider">Stok Akun Siap</span>
+            <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm">
+              <i class="fa-solid fa-key"></i>
+            </div>
+          </div>
+          <div id="stat-stocks" class="text-2xl font-bold text-slate-900">0</div>
+          <p class="text-xs text-slate-400 mt-1">Email:Pass:Cookie tersedia</p>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between text-slate-500 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider">Bot Telegram Aktif</span>
+            <div class="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center text-sm">
+              <i class="fa-solid fa-robot"></i>
+            </div>
+          </div>
+          <div id="stat-bots" class="text-2xl font-bold text-slate-900">0</div>
+          <p class="text-xs text-slate-400 mt-1">Instance polling online</p>
+        </div>
+      </div>
+
+      <!-- MAIN TABS -->
+      <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-8">
+        <div class="border-b border-slate-200 px-6 flex flex-wrap gap-6 text-sm font-semibold text-slate-500">
+          <button class="tab-btn active border-b-2 border-indigo-600 text-indigo-600 py-4 px-1" data-tab="orders">
+            <i class="fa-solid fa-receipt mr-1.5"></i> Daftar Pesanan (Orders)
+          </button>
+          <button class="tab-btn border-b-2 border-transparent hover:text-slate-900 py-4 px-1" data-tab="products">
+            <i class="fa-solid fa-box mr-1.5"></i> Produk & Stok Akun
+          </button>
+          <button class="tab-btn border-b-2 border-transparent hover:text-slate-900 py-4 px-1" data-tab="wallets">
+            <i class="fa-solid fa-wallet mr-1.5"></i> Dompet Kripto Manual
+          </button>
+          <button class="tab-btn border-b-2 border-transparent hover:text-slate-900 py-4 px-1" data-tab="bots">
+            <i class="fa-brands fa-telegram mr-1.5"></i> Multi-Bot Manager
+          </button>
+          <button class="tab-btn border-b-2 border-transparent hover:text-slate-900 py-4 px-1" data-tab="settings">
+            <i class="fa-solid fa-gear mr-1.5"></i> Pengaturan Toko & Gateway
+          </button>
+        </div>
+
+        <!-- TAB 1: ORDERS -->
+        <div id="tab-orders" class="p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-slate-900">Pesanan Masuk Real-Time</h2>
+            <span class="text-xs text-slate-400">Sinkronisasi otomatis dengan Firestore listener</span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+              <thead class="text-xs uppercase bg-slate-50 text-slate-500 border-b border-slate-200">
+                <tr>
+                  <th class="py-3 px-4 font-semibold">Order ID</th>
+                  <th class="py-3 px-4 font-semibold">User</th>
+                  <th class="py-3 px-4 font-semibold">Produk</th>
+                  <th class="py-3 px-4 font-semibold">Total</th>
+                  <th class="py-3 px-4 font-semibold">Metode & Status</th>
+                  <th class="py-3 px-4 font-semibold">Kredensial Dikirim</th>
+                  <th class="py-3 px-4 font-semibold text-right">Aksi Admin</th>
+                </tr>
+              </thead>
+              <tbody id="orders-tbody" class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="7" class="py-8 text-center text-slate-400">Memuat data pesanan...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB 2: PRODUCTS & STOCKS -->
+        <div id="tab-products" class="p-6 hidden">
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2">
+              <h2 class="text-lg font-bold text-slate-900 mb-4">Katalog Produk</h2>
+              <div id="products-list" class="space-y-4"></div>
+            </div>
+
+            <!-- STOCK BULK IMPORTER -->
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-5">
+              <h3 class="font-bold text-slate-900 mb-2 text-base">Bulk Import Stok Akun</h3>
+              <p class="text-xs text-slate-500 mb-4">Format input per baris: <br><code class="text-indigo-600 font-mono">Email:Password:Cookie</code></p>
+              
+              <form id="form-add-stock" class="space-y-3">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-700 mb-1">Pilih Produk</label>
+                  <select id="stock-product-select" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800" required></select>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-700 mb-1">Daftar Akun (1 Akun / Baris)</label>
+                  <textarea id="stock-accounts-text" rows="5" placeholder="user1@mail.com:pass123:sess_cookie_abc&#10;user2@mail.com:pass456:sess_cookie_def" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs text-slate-800"></textarea>
+                </div>
+                <button type="submit" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium text-sm transition-all shadow-sm">
+                  <i class="fa-solid fa-plus mr-1"></i> Tambahkan ke Stok Firestore
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: WALLETS -->
+        <div id="tab-wallets" class="p-6 hidden">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-slate-900">Alamat Kripto Manual (TRC20 / BEP20 / BTC / SOL)</h2>
+            <button id="btn-add-wallet" class="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg">
+              <i class="fa-solid fa-plus mr-1"></i> Tambah Wallet
+            </button>
+          </div>
+          <div id="wallets-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+
+        <!-- TAB 4: BOTS -->
+        <div id="tab-bots" class="p-6 hidden">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900">Multi-Bot Telegram Engine</h2>
+              <p class="text-xs text-slate-500">Jalankan beberapa bot sekaligus secara bersamaan dengan token BotFather</p>
+            </div>
+          </div>
+
+          <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-6">
+            <h3 class="text-xs font-bold text-indigo-900 uppercase tracking-wider mb-2">Tambah Token Bot Baru</h3>
+            <form id="form-add-bot" class="flex flex-wrap gap-3">
+              <input id="bot-name-input" type="text" placeholder="Nama Bot (misal: @MyShopBot)" class="flex-1 min-w-[200px] px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm" required />
+              <input id="bot-token-input" type="text" placeholder="Bot Token (e.g. 123456:ABC-DEF...)" class="flex-2 min-w-[300px] px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm font-mono" required />
+              <button type="submit" class="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">
+                Simpan & Luncurkan Polling
+              </button>
+            </form>
+          </div>
+
+          <div id="bots-list" class="space-y-3"></div>
+        </div>
+
+        <!-- TAB 5: SETTINGS -->
+        <div id="tab-settings" class="p-6 hidden">
+          <h2 class="text-lg font-bold text-slate-900 mb-4">Pengaturan Sistem & Payment Gateway</h2>
+          <form id="form-settings" class="space-y-5 max-w-2xl">
+            <div class="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
+              <h3 class="text-sm font-bold text-slate-800">NOWPayments API Gateway</h3>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">NOWPayments API Key</label>
+                <input id="set-nowpay-key" type="password" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono" placeholder="Masukkan API Key dari dashboard nowpayments.io" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">NOWPayments IPN Secret</label>
+                <input id="set-nowpay-secret" type="password" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono" placeholder="IPN Secret untuk verifikasi tanda tangan Webhook" />
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
+              <h3 class="text-sm font-bold text-slate-800">Teks Penjualan Bot Telegram</h3>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Teks Sambutan (/start)</label>
+                <textarea id="set-welcome-text" rows="4" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Syarat & Ketentuan / Garansi</label>
+                <textarea id="set-terms-text" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
+              </div>
+            </div>
+
+            <button type="submit" class="py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-sm">
+              Simpan Pengaturan
+            </button>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Audio synthesizer for incoming order alert
+    function playOrderChime() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); // A5
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.6);
+      } catch (e) {
+        console.warn('Audio chime error:', e);
+      }
+    }
+
+    document.getElementById('btn-sound-test').addEventListener('click', playOrderChime);
+
+    // Tab switcher
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          b.classList.remove('border-indigo-600', 'text-indigo-600');
+          b.classList.add('border-transparent');
+        });
+        btn.classList.add('border-indigo-600', 'text-indigo-600');
+        btn.classList.remove('border-transparent');
+
+        const tab = btn.getAttribute('data-tab');
+        ['orders', 'products', 'wallets', 'bots', 'settings'].forEach(t => {
+          document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
+        });
+      });
+    });
+
+    // Login Handler
+    const loginModal = document.getElementById('login-modal');
+    const appContent = document.getElementById('app-content');
+    const loginForm = document.getElementById('login-form');
+    const loginError = document.getElementById('login-error');
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      loginError.classList.add('hidden');
+      const user = document.getElementById('login-user').value;
+      const pass = document.getElementById('login-pass').value;
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: user, password: pass })
+        });
+        const data = await res.json();
+        if (data.success) {
+          sessionStorage.setItem('admin_token', data.user.token);
+          sessionStorage.setItem('admin_user', data.user.username);
+          document.getElementById('nav-user').textContent = data.user.username;
+          loginModal.classList.add('hidden');
+          appContent.classList.remove('hidden');
+          loadDashboardData();
+          startPollingInterval();
+        } else {
+          loginError.textContent = data.message || 'Login gagal';
+          loginError.classList.remove('hidden');
+        }
+      } catch (err) {
+        loginError.textContent = 'Server connection error';
+        loginError.classList.remove('hidden');
+      }
+    });
+
+    document.getElementById('btn-logout').addEventListener('click', () => {
+      sessionStorage.clear();
+      window.location.reload();
+    });
+
+    // Data Loaders
+    let previousOrdersCount = -1;
+
+    async function loadDashboardData() {
+      loadStats();
+      loadOrders();
+      loadProducts();
+      loadWallets();
+      loadBots();
+      loadSettings();
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('stat-revenue').textContent = '$' + (data.data.totalRevenueUsd || 0).toFixed(2);
+          document.getElementById('stat-pending').textContent = data.data.pendingOrders || 0;
+          document.getElementById('stat-stocks').textContent = data.data.availableStocks || 0;
+          document.getElementById('stat-bots').textContent = data.data.activeBotsOnline || 0;
+        }
+      } catch (e) {}
+    }
+
+    async function loadOrders() {
+      try {
+        const res = await fetch('/api/orders');
+        const data = await res.json();
+        if (data.success) {
+          const orders = data.data || [];
+          if (previousOrdersCount !== -1 && orders.length > previousOrdersCount) {
+            playOrderChime();
+          }
+          previousOrdersCount = orders.length;
+
+          const tbody = document.getElementById('orders-tbody');
+          if (orders.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="py-8 text-center text-slate-400">Belum ada pesanan masuk.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = orders.map(o => {
+            const isPaid = o.payment_status === 'PAID' || o.payment_status === 'VERIFIED_BY_ADMIN';
+            const badgeClass = isPaid ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+              o.payment_status === 'CANCELLED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+              'bg-amber-50 text-amber-700 border-amber-200';
+
+            return `
+              <tr class="hover:bg-slate-50/75 transition-colors">
+                <td class="py-3.5 px-4 font-mono font-medium text-xs text-slate-900">${o.order_id}</td>
+                <td class="py-3.5 px-4 text-xs">@${o.username || o.user_id}</td>
+                <td class="py-3.5 px-4 font-medium text-slate-800">${o.product_title}</td>
+                <td class="py-3.5 px-4 font-semibold text-slate-900">$${o.amount}</td>
+                <td class="py-3.5 px-4">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}">
+                    ${o.payment_status}
+                  </span>
+                  <div class="text-[10px] text-slate-400 mt-0.5">${o.payment_gateway || o.payment_method}</div>
+                </td>
+                <td class="py-3.5 px-4 text-xs font-mono max-w-[200px] truncate text-slate-600" title="${o.account_delivered || 'Belum dikirim'}">
+                  ${o.account_delivered ? '<i class="fa-solid fa-check text-emerald-500 mr-1"></i>' + o.account_delivered : '<span class="text-slate-400 italic">Menunggu bayar</span>'}
+                </td>
+                <td class="py-3.5 px-4 text-right space-x-1">
+                  ${!isPaid ? `
+                    <button onclick="approveOrder('${o.order_id}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-medium">Approve</button>
+                    <button onclick="rejectOrder('${o.order_id}')" class="px-2.5 py-1 bg-slate-200 hover:bg-rose-100 hover:text-rose-700 text-slate-700 rounded text-xs font-medium">Reject</button>
+                  ` : `<span class="text-xs text-emerald-600 font-semibold"><i class="fa-solid fa-check-double"></i> Terkirim</span>`}
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (e) {}
+    }
+
+    window.approveOrder = async (orderId) => {
+      if (!confirm('Verifikasi manual pesanan ' + orderId + ' dan kirim akun ke user?')) return;
+      await fetch(`/api/orders/${orderId}/approve`, { method: 'POST' });
+      loadDashboardData();
+    };
+
+    window.rejectOrder = async (orderId) => {
+      if (!confirm('Batalkan pesanan ' + orderId + '?')) return;
+      await fetch(`/api/orders/${orderId}/reject`, { method: 'POST' });
+      loadDashboardData();
+    };
+
+    async function loadProducts() {
+      try {
+        const res = await fetch('/api/products');
+        const data = await res.json();
+        if (data.success) {
+          const prods = data.data || [];
+          const list = document.getElementById('products-list');
+          const select = document.getElementById('stock-product-select');
+
+          select.innerHTML = prods.map(p => `<option value="${p.product_id}">${p.title} ($${p.price_usd})</option>`).join('');
+
+          list.innerHTML = prods.map(p => `
+            <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between">
+              <div>
+                <span class="text-xs font-semibold px-2 py-0.5 bg-slate-100 text-slate-600 rounded mr-2">${p.category}</span>
+                <span class="font-bold text-slate-900">${p.title}</span>
+                <div class="text-xs text-slate-500 mt-1">
+                  Harga: <b class="text-slate-800">$${p.price_usd}</b> (Rp ${(p.price_idr || 0).toLocaleString('id-ID')})
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-xs font-bold px-2.5 py-1 rounded-full ${p.available_stocks > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}">
+                  Stok: ${p.available_stocks}
+                </span>
+                <button onclick="deleteProduct('${p.product_id}')" class="text-slate-400 hover:text-rose-600 p-1.5"><i class="fa-solid fa-trash"></i></button>
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (e) {}
+    }
+
+    // Stock Form submit
+    document.getElementById('form-add-stock').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pId = document.getElementById('stock-product-select').value;
+      const text = document.getElementById('stock-accounts-text').value;
+
+      const res = await fetch('/api/stocks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: pId, accounts_text: text })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Berhasil menambahkan ${data.added_count} akun ke stok Firestore!`);
+        document.getElementById('stock-accounts-text').value = '';
+        loadDashboardData();
+      }
+    });
+
+    async function loadWallets() {
+      try {
+        const res = await fetch('/api/wallets');
+        const data = await res.json();
+        if (data.success) {
+          const grid = document.getElementById('wallets-grid');
+          grid.innerHTML = (data.data || []).map(w => `
+            <div class="bg-white border border-slate-200 rounded-xl p-4 flex gap-4 items-center">
+              <img src="${w.qr_url}" class="w-20 h-20 border rounded-lg p-1 bg-white" alt="QR" />
+              <div class="flex-1 min-w-0">
+                <span class="font-bold text-sm text-slate-900">${w.network}</span>
+                <p class="font-mono text-xs text-slate-500 break-all select-all mt-1">${w.address}</p>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 mt-2 inline-block">Aktif</span>
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (e) {}
+    }
+
+    async function loadBots() {
+      try {
+        const res = await fetch('/api/bots');
+        const data = await res.json();
+        if (data.success) {
+          const list = document.getElementById('bots-list');
+          list.innerHTML = (data.data || []).map(b => `
+            <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between">
+              <div>
+                <div class="flex items-center gap-2">
+                  <i class="fa-brands fa-telegram text-sky-500"></i>
+                  <span class="font-bold text-slate-900">${b.bot_name}</span>
+                  <span class="text-xs px-2 py-0.5 rounded-full font-medium ${b.is_running ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}">
+                    ${b.is_running ? '● Polling Online' : '○ Offline'}
+                  </span>
+                </div>
+                <div class="text-xs font-mono text-slate-400 mt-1 truncate max-w-sm">${b.bot_token.slice(0, 10)}...${b.bot_token.slice(-6)}</div>
+              </div>
+              <div class="flex items-center gap-2">
+                ${b.is_running ? `
+                  <button onclick="stopBot('${b.token_id}')" class="px-3 py-1 bg-amber-100 text-amber-800 rounded text-xs font-medium">Stop</button>
+                ` : `
+                  <button onclick="launchBot('${b.token_id}')" class="px-3 py-1 bg-emerald-600 text-white rounded text-xs font-medium">Start Polling</button>
+                `}
+                <button onclick="deleteBot('${b.token_id}')" class="text-slate-400 hover:text-rose-600 p-1"><i class="fa-solid fa-trash"></i></button>
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (e) {}
+    }
+
+    document.getElementById('form-add-bot').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('bot-name-input').value;
+      const token = document.getElementById('bot-token-input').value;
+
+      const res = await fetch('/api/bots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot_name: name, bot_token: token, auto_start: true })
+      });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById('bot-name-input').value = '';
+        document.getElementById('bot-token-input').value = '';
+        loadBots();
+      }
+    });
+
+    window.launchBot = async (id) => {
+      await fetch(`/api/bots/${id}/launch`, { method: 'POST' });
+      loadBots();
+    };
+
+    window.stopBot = async (id) => {
+      await fetch(`/api/bots/${id}/stop`, { method: 'POST' });
+      loadBots();
+    };
+
+    window.deleteBot = async (id) => {
+      if (!confirm('Hapus token bot ini?')) return;
+      await fetch(`/api/bots/${id}`, { method: 'DELETE' });
+      loadBots();
+    };
+
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        if (data.success && data.data) {
+          const s = data.data;
+          document.getElementById('set-nowpay-key').value = s.nowpayments_api_key || '';
+          document.getElementById('set-nowpay-secret').value = s.nowpayments_ipn_secret || '';
+          document.getElementById('set-welcome-text').value = s.welcome_text || '';
+          document.getElementById('set-terms-text').value = s.terms_text || '';
+        }
+      } catch (e) {}
+    }
+
+    document.getElementById('form-settings').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        nowpayments_api_key: document.getElementById('set-nowpay-key').value,
+        nowpayments_ipn_secret: document.getElementById('set-nowpay-secret').value,
+        welcome_text: document.getElementById('set-welcome-text').value,
+        terms_text: document.getElementById('set-terms-text').value
+      };
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) alert('Pengaturan berhasil disimpan ke Firestore!');
+    });
+
+    function startPollingInterval() {
+      setInterval(loadOrders, 3000);
+      setInterval(loadStats, 5000);
+    }
+  </script>
+</body>
+</html>

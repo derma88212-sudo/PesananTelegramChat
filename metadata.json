@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Account Shop & Admin Panel",
+  "description": "Multi-bot Telegram digital product shop engine with Firestore synchronization, NOWPayments integration, and real-time white admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
