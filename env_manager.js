@@ -10,6 +10,9 @@ import path from 'path';
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const ENV_EXAMPLE_PATH = path.join(process.cwd(), '.env.example');
 
+// In-memory fallback state for read-only / serverless platforms (e.g. Vercel, Railway dynamic envs)
+const memoryStore = {};
+
 /**
  * Parse .env file content into key-value pairs
  * Preserves comments and empty lines for round-trip editing
@@ -34,7 +37,11 @@ export function parseEnvFile(content = '') {
       const eqIndex = trimmed.indexOf('=');
       if (eqIndex > 0) {
         const key = trimmed.substring(0, eqIndex).trim();
-        const value = trimmed.substring(eqIndex + 1).trim();
+        let value = trimmed.substring(eqIndex + 1).trim();
+        // Remove quotes if enclosed
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.substring(1, value.length - 1);
+        }
         result.variables[key] = value;
         result.order.push({ type: 'variable', key, index });
       } else {
@@ -49,46 +56,55 @@ export function parseEnvFile(content = '') {
 }
 
 /**
- * Read and parse the .env file
+ * Read and parse the .env file with memory store merge
  */
 export function readEnvFile() {
   try {
-    if (!fs.existsSync(ENV_FILE_PATH)) {
-      // Try to create from .env.example if it exists
-      if (fs.existsSync(ENV_EXAMPLE_PATH)) {
-        const exampleContent = fs.readFileSync(ENV_EXAMPLE_PATH, 'utf8');
-        return parseEnvFile(exampleContent);
-      }
-      return { variables: {}, comments: {}, order: [], rawLines: [] };
+    let parsed = { variables: {}, comments: {}, order: [], rawLines: [] };
+    if (fs.existsSync(ENV_FILE_PATH)) {
+      const content = fs.readFileSync(ENV_FILE_PATH, 'utf8');
+      parsed = parseEnvFile(content);
+    } else if (fs.existsSync(ENV_EXAMPLE_PATH)) {
+      const exampleContent = fs.readFileSync(ENV_EXAMPLE_PATH, 'utf8');
+      parsed = parseEnvFile(exampleContent);
     }
-    const content = fs.readFileSync(ENV_FILE_PATH, 'utf8');
-    return parseEnvFile(content);
+
+    // Merge memory modifications (useful for read-only environments like Vercel)
+    Object.assign(parsed.variables, memoryStore);
+    return parsed;
   } catch (error) {
     console.error('[EnvManager] Error reading .env file:', error.message);
-    return { variables: {}, comments: {}, order: [], rawLines: [] };
+    return { variables: { ...memoryStore }, comments: {}, order: [], rawLines: [] };
   }
 }
 
 /**
  * Write variables back to .env file preserving comments and formatting
+ * Fallback to memoryStore & process.env update if file system is read-only or in cloud serverless
  */
 export function writeEnvFile(variables, preserveStructure = true) {
   try {
+    // Synchronize into runtime process.env instantly
+    Object.entries(variables).forEach(([k, v]) => {
+      process.env[k] = v;
+      memoryStore[k] = v;
+    });
+
     const parsed = readEnvFile();
     const lines = [...parsed.rawLines];
+    const varsToWrite = { ...variables };
 
     // Update existing variables
     parsed.order.forEach(item => {
-      if (item.type === 'variable' && variables.hasOwnProperty(item.key)) {
-        lines[item.index] = `${item.key}=${variables[item.key]}`;
-        delete variables[item.key];
+      if (item.type === 'variable' && varsToWrite.hasOwnProperty(item.key)) {
+        lines[item.index] = `${item.key}=${varsToWrite[item.key]}`;
+        delete varsToWrite[item.key];
       }
     });
 
     // Append new variables at the end
-    const newVars = Object.entries(variables);
+    const newVars = Object.entries(varsToWrite);
     if (newVars.length > 0) {
-      // Add a newline before new vars if the file doesn't end with one
       if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
         lines.push('');
       }
@@ -98,7 +114,15 @@ export function writeEnvFile(variables, preserveStructure = true) {
     }
 
     const content = lines.join('\n');
-    fs.writeFileSync(ENV_FILE_PATH, content, 'utf8');
+    
+    // Attempt file system write (VPS, Railway, Local)
+    try {
+      fs.writeFileSync(ENV_FILE_PATH, content, 'utf8');
+    } catch (fsErr) {
+      // Fallback for Vercel / read-only environment
+      console.warn('[EnvManager] Filesystem read-only or permission denied. Applied changes to process memory:', fsErr.message);
+    }
+
     return { success: true };
   } catch (error) {
     console.error('[EnvManager] Error writing .env file:', error.message);
@@ -107,14 +131,14 @@ export function writeEnvFile(variables, preserveStructure = true) {
 }
 
 /**
- * Get all environment variables (from .env file + process.env)
+ * Get all environment variables (from .env file + process.env + memoryStore)
  * process.env takes precedence for security-sensitive values
  */
 export function getAllEnvVars() {
   const parsed = readEnvFile();
-  const result = { ...parsed.variables };
+  const result = { ...parsed.variables, ...memoryStore };
 
-  // Merge with process.env (process.env takes precedence)
+  // Merge with process.env
   Object.keys(process.env).forEach(key => {
     if (process.env[key] !== undefined) {
       result[key] = process.env[key];
@@ -129,7 +153,7 @@ export function getAllEnvVars() {
  */
 export function getEnvVar(key) {
   const parsed = readEnvFile();
-  return parsed.variables[key] || process.env[key] || null;
+  return process.env[key] || memoryStore[key] || parsed.variables[key] || null;
 }
 
 /**
@@ -138,6 +162,8 @@ export function getEnvVar(key) {
 export function setEnvVar(key, value) {
   const parsed = readEnvFile();
   parsed.variables[key] = value;
+  process.env[key] = value;
+  memoryStore[key] = value;
   return writeEnvFile(parsed.variables);
 }
 
@@ -147,6 +173,10 @@ export function setEnvVar(key, value) {
 export function setEnvVars(variables) {
   const parsed = readEnvFile();
   Object.assign(parsed.variables, variables);
+  Object.assign(memoryStore, variables);
+  Object.entries(variables).forEach(([k, v]) => {
+    process.env[k] = v;
+  });
   return writeEnvFile(parsed.variables);
 }
 
@@ -155,8 +185,10 @@ export function setEnvVars(variables) {
  */
 export function deleteEnvVar(key) {
   const parsed = readEnvFile();
-  if (parsed.variables.hasOwnProperty(key)) {
+  if (parsed.variables.hasOwnProperty(key) || memoryStore.hasOwnProperty(key) || process.env.hasOwnProperty(key)) {
     delete parsed.variables[key];
+    delete memoryStore[key];
+    delete process.env[key];
     return writeEnvFile(parsed.variables);
   }
   return { success: true };
@@ -164,6 +196,7 @@ export function deleteEnvVar(key) {
 
 /**
  * Get categorized environment variables for UI display
+ * Dynamic fallback ensures unknown/custom keys appear under 'other' (Lainnya)
  */
 export function getCategorizedEnvVars() {
   const allVars = getAllEnvVars();
@@ -180,7 +213,8 @@ export function getCategorizedEnvVars() {
     mongodb: { label: 'MongoDB', vars: [], icon: '🍃' },
     nowpayments: { label: 'NOWPayments (Crypto)', vars: [], icon: '💰' },
     ai: { label: 'Google Gemini AI', vars: [], icon: '🧠' },
-    audio: { label: 'Audio Alerts', vars: [], icon: '🔊' }
+    audio: { label: 'Audio Alerts', vars: [], icon: '🔊' },
+    other: { label: 'Lainnya', vars: [], icon: '⚙️' }
   };
 
   const categoryMap = {
@@ -188,6 +222,8 @@ export function getCategorizedEnvVars() {
     NODE_ENV: 'application',
     PORT: 'application',
     APP_URL: 'application',
+    VERCEL: 'application',
+    RAILWAY_ENVIRONMENT: 'application',
     // Admin
     ADMIN_USERNAME: 'admin',
     ADMIN_PASSWORD: 'admin',
@@ -229,12 +265,12 @@ export function getCategorizedEnvVars() {
   };
 
   Object.entries(allVars).forEach(([key, value]) => {
-    const category = categoryMap[key] || 'application';
+    const category = categoryMap[key] || 'other';
     const isSecret = key.includes('PASSWORD') || key.includes('SECRET') || key.includes('KEY') || key.includes('TOKEN') || key.includes('PRIVATE');
     
     categories[category].vars.push({
       key,
-      value,
+      value: String(value ?? ''),
       isSecret,
       isInEnvFile: parsed.variables.hasOwnProperty(key),
       isInProcessEnv: process.env[key] !== undefined
@@ -307,6 +343,15 @@ export function restoreEnvFile(backupPath) {
       return { success: false, error: 'Backup file not found' };
     }
     fs.copyFileSync(backupPath, ENV_FILE_PATH);
+    
+    // Refresh memory runtime
+    const content = fs.readFileSync(ENV_FILE_PATH, 'utf8');
+    const parsed = parseEnvFile(content);
+    Object.entries(parsed.variables).forEach(([k, v]) => {
+      process.env[k] = v;
+      memoryStore[k] = v;
+    });
+
     return { success: true };
   } catch (error) {
     console.error('[EnvManager] Error restoring backup:', error.message);
