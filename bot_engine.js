@@ -9,6 +9,7 @@
  * - Strict payment verification (never release accounts before confirmed blockchain payment or admin approval)
  * - Atomic stock locking and release (runTransaction)
  * - Auto-translation using Google Gen AI SDK (gemini-3.8-flash)
+ * - Clean UI: No Emojis across all bot messages and menus.
  */
 
 import { Telegraf, Markup } from 'telegraf';
@@ -78,6 +79,14 @@ export function getBotEngineMetrics() {
 }
 
 /**
+ * Clean text helper to strip emojis from dynamic database strings
+ */
+function stripEmojis(text = '') {
+  if (typeof text !== 'string') return text;
+  return text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{2300}-\u{23FF}]/gu, '').trim();
+}
+
+/**
  * Build a JSON snapshot of the core database collections for backup purposes.
  */
 export async function buildDatabaseBackup(dbService) {
@@ -137,21 +146,21 @@ function getGemini() {
  * Dynamic translator using Gemini (gemini-3.8-flash)
  */
 export async function translateText(text, targetLang = 'en') {
-  if (!text || !targetLang || targetLang === 'en') return text;
+  if (!text || !targetLang || targetLang === 'en') return stripEmojis(text);
   
   const ai = getGemini();
-  if (!ai) return text;
+  if (!ai) return stripEmojis(text);
 
   try {
-    const prompt = `You are an expert translator for a Telegram digital goods store. Translate the following text into language code '${targetLang}'. Keep all HTML tags (<b>, <i>, <code>, <pre>), emojis, symbols, and technical credentials (like email, passwords, tokens) intact:\n\n${text}`;
+    const prompt = `You are an expert translator for a Telegram digital goods store. Translate the following text into language code '${targetLang}'. Keep all HTML tags (<b>, <i>, <code>, <pre>), symbols, and technical credentials (like email, passwords, tokens) intact. Do not include any emojis in the output:\n\n${text}`;
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt
     });
-    return response.text?.trim() || text;
+    return stripEmojis(response.text?.trim() || text);
   } catch (err) {
     console.error('Translation error, using fallback:', err.message);
-    return text;
+    return stripEmojis(text);
   }
 }
 
@@ -160,20 +169,18 @@ const AUTO_TRANSLATE_CACHE = new Map();
 
 /**
  * Auto-translate an English (or base) string into the target language using
- * Gemini, with a per-language cache. Falls back to the original text if no API
- * key is configured or the translation fails, so the bot never breaks.
+ * Gemini, with a per-language cache.
  */
 export async function autoTranslate(text, targetLang = 'en') {
-  if (!text || !targetLang || targetLang === 'en') return text;
+  if (!text || !targetLang || targetLang === 'en') return stripEmojis(text);
   const cacheKey = `${targetLang}::${text}`;
   if (AUTO_TRANSLATE_CACHE.has(cacheKey)) return AUTO_TRANSLATE_CACHE.get(cacheKey);
 
   const translated = await translateText(text, targetLang);
-  // Only cache successful (changed) translations to avoid caching raw fallbacks.
   if (typeof translated === 'string' && translated.trim()) {
     AUTO_TRANSLATE_CACHE.set(cacheKey, translated);
   }
-  return translated;
+  return stripEmojis(translated);
 }
 
 /**
@@ -182,7 +189,6 @@ export async function autoTranslate(text, targetLang = 'en') {
 export function parseAccountCredential(accountData = '') {
   if (!accountData) return { raw: '' };
   
-  // Format could be: Email:Password:Cookie:ApiKey:Note or newline separated
   const parts = accountData.split(':');
   if (parts.length >= 3) {
     return {
@@ -198,23 +204,105 @@ export function parseAccountCredential(accountData = '') {
 }
 
 /**
- * Build language selection inline keyboard
+ * Build language selection inline keyboard (Without emojis)
  */
 function buildLanguageKeyboard() {
   const rows = [];
   for (let i = 0; i < SUPPORTED_LANGUAGES.length; i += 2) {
     const row = [
-      Markup.button.callback(`${SUPPORTED_LANGUAGES[i].flag} ${SUPPORTED_LANGUAGES[i].name}`, `set_lang_${SUPPORTED_LANGUAGES[i].code}`)
+      Markup.button.callback(`${SUPPORTED_LANGUAGES[i].name}`, `set_lang_${SUPPORTED_LANGUAGES[i].code}`)
     ];
     if (i + 1 < SUPPORTED_LANGUAGES.length) {
       row.push(
-        Markup.button.callback(`${SUPPORTED_LANGUAGES[i + 1].flag} ${SUPPORTED_LANGUAGES[i + 1].name}`, `set_lang_${SUPPORTED_LANGUAGES[i + 1].code}`)
+        Markup.button.callback(`${SUPPORTED_LANGUAGES[i + 1].name}`, `set_lang_${SUPPORTED_LANGUAGES[i + 1].code}`)
       );
     }
     rows.push(row);
   }
-  rows.push([Markup.button.callback('🔙 Back', 'menu_main')]);
+  rows.push([Markup.button.callback('Back', 'menu_main')]);
   return Markup.inlineKeyboard(rows);
+}
+
+/**
+ * Shared function to deliver full receipt & credentials to user after payment approval
+ */
+async function sendFullOrderReceipt(ctx, bot, dbService, order, deliveredAccount) {
+  const userLang = order.user_lang || 'en';
+  const parsed = parseAccountCredential(deliveredAccount);
+
+  let credBlock = '';
+  if (parsed.email && parsed.password) {
+    credBlock = `Email: <code>${parsed.email}</code>\n` +
+                `Password: <code>${parsed.password}</code>\n` +
+                (parsed.cookie ? `Session Cookie: <code>${parsed.cookie}</code>\n` : '') +
+                (parsed.apiKey ? `API Key: <code>${parsed.apiKey}</code>\n` : '') +
+                (parsed.note ? `Note: ${parsed.note}\n` : '');
+  } else {
+    credBlock = `<code>${deliveredAccount}</code>`;
+  }
+
+  const rawProduct = await dbService.getProduct(order.product_id).catch(() => null);
+  const productUrlLine = rawProduct?.product_url
+    ? `\nProduct Access URL:\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n`
+    : '';
+
+  const dateFormatted = new Date(order.updated_at || Date.now()).toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  const amountDisplay = (order.currency === 'IDR' || order.total_amount_idr)
+    ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
+    : `${order.amount} ${order.currency || 'USD'}`;
+
+  const receiptText = stripEmojis(
+    `<b>PAYMENT SUCCESSFUL & CONFIRMED</b>\n` +
+    `----------------------------------------\n` +
+    `<b>OFFICIAL PAYMENT RECEIPT</b>\n` +
+    `----------------------------------------\n` +
+    `Invoice No.: <code>${order.order_id}</code>\n` +
+    `Product: ${order.product_title}${productUrlLine}` +
+    `Total Paid: <code>${amountDisplay}</code>\n` +
+    `Payment Method: ${order.payment_method_name || order.payment_method || 'Payment Gateway'}\n` +
+    `Transaction Time: ${dateFormatted} WIB\n` +
+    `Status: <b>PAID & VERIFIED</b>\n` +
+    `----------------------------------------\n` +
+    `<b>DELIVERED ACCOUNT CREDENTIALS:</b>\n` +
+    `${credBlock}\n` +
+    `----------------------------------------\n` +
+    `<i>This receipt is official proof of a valid transaction. Account credentials are warranty-guaranteed.</i>`
+  );
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('View Detailed Receipt', `view_receipt_${order.order_id}`)],
+    [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+    [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
+  ]);
+
+  if (ctx && ctx.telegram && ctx.chat) {
+    // If context is present, send directly
+    try {
+      const sendOptions = { parse_mode: 'HTML', reply_markup: keyboard.reply_markup };
+      return await ctx.telegram.sendMessage(ctx.chat.id, receiptText, sendOptions);
+    } catch (e) {
+      const plainText = receiptText.replace(/<[^>]*>?/gm, '');
+      return await ctx.telegram.sendMessage(ctx.chat.id, plainText, { reply_markup: keyboard.reply_markup });
+    }
+  } else {
+    // Background push notification directly to user ID
+    try {
+      return await bot.telegram.sendMessage(order.user_id, receiptText, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (e) {
+      console.warn('Failed to send receipt to user:', e.message);
+    }
+  }
 }
 
 /**
@@ -224,7 +312,6 @@ export function createBotInstance(botConfig, dbService) {
   const { token_id, bot_token, bot_name } = botConfig;
   const bot = new Telegraf(bot_token);
 
-  // Request/latency tracking middleware for realtime engine monitoring
   bot.use(async (ctx, next) => {
     const start = Date.now();
     try {
@@ -234,12 +321,10 @@ export function createBotInstance(botConfig, dbService) {
     }
   });
 
-  // Global error handler to prevent bot or Node from crashing on unhandled rejection
   bot.catch((err, ctx) => {
     console.error(`[Bot Engine] [${bot_name}] Error for update ${ctx?.updateType || 'unknown'}:`, err.message || err);
   });
 
-  // Helper: Retrieve user language from Firestore or Telegram context
   async function getUserLang(ctx) {
     const telegramId = String(ctx.from?.id || ctx.chat?.id);
     try {
@@ -247,17 +332,15 @@ export function createBotInstance(botConfig, dbService) {
       if (session?.language) return session.language;
     } catch (e) {}
 
-    // Fallback to Telegram client language code
     const raw = (ctx.from?.language_code || 'en').toLowerCase();
     const match = SUPPORTED_LANGUAGES.find(l => raw.startsWith(l.code));
     return match ? match.code : 'en';
   }
 
-  // Helper: Clean UI - Deletes ONLY previous BOT messages. USER messages (like /start) are KEPT.
+  // Clean UI function with emoji stripping
   async function cleanAndSend(ctx, text, keyboard = null, options = {}) {
     const telegramId = String(ctx.from?.id || ctx.chat?.id);
 
-    // Optional auto-translation for hardcoded (non-localized) strings.
     if (options.translate && text && !options._translated) {
       try {
         const targetLang = await getUserLang(ctx);
@@ -267,10 +350,8 @@ export function createBotInstance(botConfig, dbService) {
       } catch (e) {}
     }
 
-    // ✅ FIXED: DO NOT delete the user's message (e.g., /start). 
-    // We only clean up the BOT's previous messages to keep the chat pristine.
+    text = stripEmojis(text);
 
-    // Retrieve previous bot messages from session and delete them
     try {
       const session = await dbService.getUserSession(telegramId);
       const toDelete = new Set();
@@ -282,15 +363,12 @@ export function createBotInstance(botConfig, dbService) {
       for (const msgId of toDelete) {
         try {
           await ctx.telegram.deleteMessage(ctx.chat.id, msgId);
-        } catch (e) {
-          // Ignored if already deleted or expired (>48h)
-        }
+        } catch (e) {}
       }
     } catch (e) {
       console.warn('Failed to clean previous messages:', e.message);
     }
 
-    // Send new message with safe parsing and photo fallback
     const sendOptions = {
       parse_mode: 'HTML',
       disable_web_page_preview: false,
@@ -309,7 +387,6 @@ export function createBotInstance(botConfig, dbService) {
           reply_markup: sendOptions.reply_markup
         });
       } catch (photoErr) {
-        console.warn('[Bot Engine] Photo send fallback to message:', photoErr.message);
         try {
           newMsg = await ctx.telegram.sendMessage(ctx.chat.id, text, sendOptions);
         } catch (sendErr) {
@@ -323,7 +400,6 @@ export function createBotInstance(botConfig, dbService) {
       try {
         newMsg = await ctx.telegram.sendMessage(ctx.chat.id, text, sendOptions);
       } catch (sendErr) {
-        // If Telegram rejects entity parsing (e.g. unclosed tags or syntax error in text)
         if (sendErr?.message && (sendErr.message.includes("can't parse entities") || sendErr.message.includes('tag'))) {
           const plainText = text.replace(/<[^>]*>?/gm, '');
           const fallbackOpts = { ...sendOptions };
@@ -335,12 +411,10 @@ export function createBotInstance(botConfig, dbService) {
       }
     }
 
-    // Persist new message ID and history to session
     try {
       const session = await dbService.getUserSession(telegramId);
       const history = Array.isArray(session?.message_history) ? session.message_history : [];
       history.push(newMsg.message_id);
-      // Keep last 8 message IDs
       const trimmedHistory = history.slice(-8);
 
       await dbService.updateUserSession(telegramId, {
@@ -356,12 +430,10 @@ export function createBotInstance(botConfig, dbService) {
     return newMsg;
   }
 
-  // Strict Admin Verification Helper (Strict Telegram ID Auth)
   async function isUserAdmin(telegramId) {
     if (!telegramId) return false;
     const strId = String(telegramId).trim();
 
-    // 1. Check environment variables
     const envIds = [
       process.env.ADMIN_TELEGRAM_ID,
       process.env.ADMIN_TELEGRAM_IDS,
@@ -377,7 +449,6 @@ export function createBotInstance(botConfig, dbService) {
 
     if (envIds.includes(strId)) return true;
 
-    // 2. Check Database Admins
     try {
       const admins = await dbService.getAdmins();
       if (admins && admins.length > 0) {
@@ -389,7 +460,6 @@ export function createBotInstance(botConfig, dbService) {
       }
     } catch (e) {}
 
-    // 3. Check registered users
     try {
       const user = await dbService.getUser(strId);
       if (user?.role === 'admin' || user?.role === 'superadmin' || user?.is_admin) return true;
@@ -398,25 +468,23 @@ export function createBotInstance(botConfig, dbService) {
     return false;
   }
 
-  // Helper: Build dynamic main menu keyboard with active channel buttons
   async function buildMainMenuKeyboard(userLang, isAdmin = false) {
     const buttons = [
-      [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
+      [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
       [
-        Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders'),
-        Markup.button.callback(getUI('menu_payments', userLang), 'menu_payments')
+        Markup.button.callback(stripEmojis(getUI('menu_orders', userLang)), 'menu_orders'),
+        Markup.button.callback(stripEmojis(getUI('menu_payments', userLang)), 'menu_payments')
       ]
     ];
 
     try {
       const channels = await dbService.getActiveChannels();
       if (channels && channels.length > 0) {
-        // Two channel buttons per row, up to 6 channels shown in the main menu.
         const channelButtons = [];
         for (const ch of channels.slice(0, 6)) {
           const link = ch.invite_link || (ch.username ? `https://t.me/${ch.username.replace('@', '')}` : null);
-          const label = ch.name || ch.username || 'Telegram Channel';
-          if (link) channelButtons.push(Markup.button.url(`📢 ${label}`, link));
+          const label = stripEmojis(ch.name || ch.username || 'Telegram Channel');
+          if (link) channelButtons.push(Markup.button.url(`Channel: ${label}`, link));
         }
         for (let i = 0; i < channelButtons.length; i += 2) {
           buttons.push(channelButtons.slice(i, i + 2));
@@ -427,23 +495,19 @@ export function createBotInstance(botConfig, dbService) {
     }
 
     buttons.push([
-      Markup.button.callback(getUI('menu_help', userLang), 'menu_help'),
-      Markup.button.callback(getUI('menu_language', userLang), 'menu_language')
+      Markup.button.callback(stripEmojis(getUI('menu_help', userLang)), 'menu_help'),
+      Markup.button.callback(stripEmojis(getUI('menu_language', userLang)), 'menu_language')
     ]);
 
-    // STRICT: Only render Admin Panel button for authorized admins!
     if (isAdmin) {
       buttons.push([
-        Markup.button.callback('👑 Store Admin Panel', 'admin_menu')
+        Markup.button.callback('Store Admin Panel', 'admin_menu')
       ]);
     }
 
     return Markup.inlineKeyboard(buttons);
   }
 
-  // Shared helper: build a manual (QRIS / E-Wallet / Bank) order, persist it and
-  // render the invoice. Used by both the custom-method and instant-QRIS actions
-  // so order/credential changes only live in one place.
   async function createManualOrderAndInvoice(ctx, { productId, method, orderPrefix, qrDataBuilder, titleBuilder, instructionsBuilder }) {
     const telegramId = String(ctx.from.id);
     const username = ctx.from.username || '';
@@ -451,19 +515,17 @@ export function createBotInstance(botConfig, dbService) {
 
     const rawProduct = await dbService.getProduct(productId);
     if (!rawProduct) {
-      await ctx.answerCbQuery('❌ Product not found.', { show_alert: true });
+      await ctx.answerCbQuery('Product not found.', { show_alert: true });
       return;
     }
     const product = getLocalizedProduct(rawProduct, userLang);
 
-    // Apply any coupon the buyer redeemed for this session
     const session = await dbService.getUserSession(telegramId).catch(() => null);
     const appliedCoupon = session?.applied_coupon;
     const baseIdrRaw = product.price_idr || 15000;
     const couponDiscount = appliedCoupon && appliedCoupon.valid ? Number(appliedCoupon.discount_amount) || 0 : 0;
     const baseIdr = Math.max(0, baseIdrRaw - couponDiscount);
 
-    // Generate unique code for IDR payments (100 - 999)
     const uniqueCode = Math.floor(100 + Math.random() * 900);
     const totalAmountIdr = baseIdr + uniqueCode;
 
@@ -496,10 +558,8 @@ export function createBotInstance(botConfig, dbService) {
 
     await dbService.createOrder(orderDoc);
 
-    // Auto-notify the registered admin group/channel about this manual order.
     notifyAdminGroupNewOrder(orderDoc).catch(() => {});
 
-    // Consume the coupon usage and clear it from the session
     if (appliedCoupon?.code) {
       try {
         const couponRecord = await dbService.getCouponByCode(appliedCoupon.code);
@@ -509,7 +569,7 @@ export function createBotInstance(botConfig, dbService) {
     }
 
     const couponNote = couponDiscount > 0
-      ? `\n🎟️ <b>Coupon ${appliedCoupon.code}:</b> -Rp ${couponDiscount.toLocaleString('id-ID')}`
+      ? `\nCoupon ${appliedCoupon.code}: -Rp ${couponDiscount.toLocaleString('id-ID')}`
       : '';
 
     const invoiceText = titleBuilder({ orderId, product, totalAmountIdr, uniqueCode, method, userLang }) +
@@ -517,11 +577,11 @@ export function createBotInstance(botConfig, dbService) {
       instructionsBuilder({ totalAmountIdr, userLang });
 
     const buttons = [
-      [Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${orderId}`)],
-      [Markup.button.url(getUI('btn_open_qr', userLang), qrUrl)],
-      [Markup.button.callback(getUI('btn_send_txid', userLang), `prompt_txid_${orderId}`)],
-      [Markup.button.callback(getUI('btn_cancel_order', userLang), `cancel_order_${orderId}`)],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      [Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${orderId}`)],
+      [Markup.button.url(stripEmojis(getUI('btn_open_qr', userLang)), qrUrl)],
+      [Markup.button.callback(stripEmojis(getUI('btn_send_txid', userLang)), `prompt_txid_${orderId}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_cancel_order', userLang)), `cancel_order_${orderId}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ];
 
     await cleanAndSend(ctx, invoiceText, Markup.inlineKeyboard(buttons), { photo: qrUrl, state: `order_${orderId}`, translate: true });
@@ -529,20 +589,17 @@ export function createBotInstance(botConfig, dbService) {
 
   // --- Handlers ---
 
-  // /start & /menu
   bot.command(['start', 'menu'], async (ctx) => {
     const telegramId = String(ctx.from.id);
     const username = ctx.from.username || '';
     const userLang = await getUserLang(ctx);
     const isAdmin = await isUserAdmin(telegramId);
 
-    // Track source channel/referral if referred via deep link
     const payload = ctx.startPayload || '';
-    let referralLink = null;
     
     if (payload.startsWith('ref_')) {
       const referralCode = payload.replace('ref_', '');
-      referralLink = await dbService.getReferralLinkByCode(referralCode);
+      const referralLink = await dbService.getReferralLinkByCode(referralCode);
       if (referralLink) {
         await dbService.updateUserSession(telegramId, { source_channel_id: referralLink.channel_id });
         await dbService.incrementReferralClick(referralLink.referral_id);
@@ -570,7 +627,6 @@ export function createBotInstance(botConfig, dbService) {
       } catch (e) {}
     }
 
-    // Upsert user in Firestore
     await dbService.upsertUser({
       telegram_id: telegramId,
       username: username,
@@ -586,35 +642,27 @@ export function createBotInstance(botConfig, dbService) {
     await cleanAndSend(ctx, welcomeText, keyboard, { state: 'main_menu' });
   });
 
-  // /language command
   bot.command(['language', 'lang'], async (ctx) => {
-    const userLang = await getUserLang(ctx);
-    const msg = `🌐 <b>SELECT LANGUAGE</b>\n\n` +
-      `Please choose your preferred language for catalog, menus, and purchase instructions:`;
+    const msg = `SELECT LANGUAGE\n\nPlease choose your preferred language for catalog, menus, and purchase instructions:`;
     await cleanAndSend(ctx, msg, buildLanguageKeyboard(), { state: 'language_select' });
   });
 
-  // Action: Open Language Selection
   bot.action('menu_language', async (ctx) => {
     await ctx.answerCbQuery();
-    const msg = `🌐 <b>CHOOSE YOUR LANGUAGE</b>\n\n` +
-      `All texts, products, payment instructions, and account credentials will be automatically displayed in your selected language:`;
+    const msg = `CHOOSE YOUR LANGUAGE\n\nAll texts, products, payment instructions, and account credentials will be automatically displayed in your selected language:`;
     await cleanAndSend(ctx, msg, buildLanguageKeyboard(), { state: 'language_select' });
   });
 
-  // Action: Set Language callback
   bot.action(/^set_lang_(.+)$/, async (ctx) => {
     const newLang = ctx.match[1];
     const telegramId = String(ctx.from.id);
 
-    // Save language preference in Firestore
     await dbService.updateUserSession(telegramId, { language: newLang });
     await dbService.upsertUser({ telegram_id: telegramId, language: newLang });
 
     const confirmMsg = getUI('lang_changed_msg', newLang);
-    await ctx.answerCbQuery(confirmMsg, { show_alert: false });
+    await ctx.answerCbQuery(stripEmojis(confirmMsg), { show_alert: false });
 
-    // Show refreshed main menu in new language
     const settings = await dbService.getSettings() || {};
     const welcomeText = getLocalizedWelcome(settings, newLang);
     const keyboard = await buildMainMenuKeyboard(newLang);
@@ -622,7 +670,6 @@ export function createBotInstance(botConfig, dbService) {
     await cleanAndSend(ctx, `${confirmMsg}\n\n${welcomeText}`, keyboard, { state: 'main_menu' });
   });
 
-  // Action: Catalog
   bot.action('menu_catalog', async (ctx) => {
     await ctx.answerCbQuery();
     const userLang = await getUserLang(ctx);
@@ -630,12 +677,11 @@ export function createBotInstance(botConfig, dbService) {
 
     if (!products || products.length === 0) {
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+        [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
       ]);
-      return cleanAndSend(ctx, '⚠️ <i>No products are currently available in the catalog.</i>', keyboard);
+      return cleanAndSend(ctx, 'No products are currently available in the catalog.', keyboard);
     }
 
-    // Build buttons for products with real available stock count
     const buttons = [];
     for (const rawProd of products) {
       const prod = getLocalizedProduct(rawProd, userLang);
@@ -645,20 +691,19 @@ export function createBotInstance(botConfig, dbService) {
 
       buttons.push([
         Markup.button.callback(
-          `${prod.title} - $${prod.price_usd} ${stockBadge}`,
+          stripEmojis(`${prod.title} - $${prod.price_usd} ${stockBadge}`),
           `prod_${prod.product_id}`
         )
       ]);
     }
-    buttons.push([Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]);
 
-    const msg = `🛍️ <b>${getUI('menu_catalog', userLang).toUpperCase()}</b>\n\n` +
-      `${getUI('catalog_select_prompt', userLang)}`;
+    const msg = `<b>${stripEmojis(getUI('menu_catalog', userLang)).toUpperCase()}</b>\n\n` +
+      `${stripEmojis(getUI('catalog_select_prompt', userLang))}`;
 
     await cleanAndSend(ctx, msg, Markup.inlineKeyboard(buttons), { state: 'catalog' });
   });
 
-  // Action: View Product Details
   bot.action(/^prod_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
@@ -666,8 +711,8 @@ export function createBotInstance(botConfig, dbService) {
     const rawProduct = await dbService.getProduct(productId);
 
     if (!rawProduct) {
-      return cleanAndSend(ctx, '❌ Product not found.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+      return cleanAndSend(ctx, 'Product not found.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
 
@@ -675,87 +720,80 @@ export function createBotInstance(botConfig, dbService) {
     const stockCount = await dbService.getAvailableStockCount(productId);
     const isAvailable = stockCount > 0;
 
-    let text = `📦 <b>${product.title}</b>\n\n` +
-      `🏷️ <b>Category:</b> ${product.category || 'Digital Goods'}\n` +
-      `💵 <b>Price USD:</b> $${product.price_usd}\n` +
-      `🇮🇩 <b>Price IDR:</b> Rp ${(product.price_idr || 0).toLocaleString('id-ID')}\n` +
-      `📊 <b>${getUI('stock_badge', userLang)}:</b> ${isAvailable ? `${stockCount} units ready` : `<b>Out of Stock</b>`}\n\n` +
-      `📝 <b>Description:</b>\n${product.description || 'Ready-to-use account with replacement warranty.'}\n\n`;
+    let text = `<b>${product.title}</b>\n\n` +
+      `Category: ${product.category || 'Digital Goods'}\n` +
+      `Price USD: $${product.price_usd}\n` +
+      `Price IDR: Rp ${(product.price_idr || 0).toLocaleString('id-ID')}\n` +
+      `Stock: ${isAvailable ? `${stockCount} units ready` : `Out of Stock`}\n\n` +
+      `Description:\n${product.description || 'Ready-to-use account with replacement warranty.'}\n\n`;
     
-    // Display product URL if available (for digital products with download/access links)
     if (rawProduct.product_url) {
-      text += `🔗 <b>Product Access URL:</b>\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n\n`;
+      text += `Product Access URL:\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n\n`;
     }
     
-    text += `⚡ <i>Account credentials (Email:Password:Cookie) will be sent automatically ONLY after your payment is verified.</i>`;
+    text += `<i>Account credentials (Email:Password:Cookie) will be sent automatically ONLY after your payment is verified.</i>`;
 
     const buttons = [];
     if (isAvailable) {
       buttons.push([
-        Markup.button.callback(getUI('btn_buy_auto', userLang), `buy_auto_${productId}`),
-        Markup.button.callback(getUI('btn_buy_manual', userLang), `buy_manual_${productId}`)
+        Markup.button.callback(stripEmojis(getUI('btn_buy_auto', userLang)), `buy_auto_${productId}`),
+        Markup.button.callback(stripEmojis(getUI('btn_buy_manual', userLang)), `buy_manual_${productId}`)
       ]);
     } else {
       buttons.push([
         Markup.button.callback('Out of Stock', `out_of_stock_${productId}`)
       ]);
     }
-    buttons.push([Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: `prod_${productId}` });
   });
 
-  // Action: Clicked Out of Stock
   bot.action(/^out_of_stock_(.+)$/, async (ctx) => {
     const userLang = await getUserLang(ctx);
-    await ctx.answerCbQuery(getUI('out_of_stock_alert', userLang), { show_alert: true });
+    await ctx.answerCbQuery(stripEmojis(getUI('out_of_stock_alert', userLang)), { show_alert: true });
   });
 
-  // Action: Buy via NOWPayments (Automatic Crypto)
   bot.action(/^buy_auto_(.+)$/, async (ctx) => {
     const productId = ctx.match[1];
     const telegramId = String(ctx.from.id);
     const username = ctx.from.username || '';
     const userLang = await getUserLang(ctx);
 
-    // STRICT STOCK CHECK: Verify available stock before generating order
     const stockCount = await dbService.getAvailableStockCount(productId);
     if (stockCount <= 0) {
-      await ctx.answerCbQuery(getUI('out_of_stock_alert', userLang), { show_alert: true });
+      await ctx.answerCbQuery(stripEmojis(getUI('out_of_stock_alert', userLang)), { show_alert: true });
       return cleanAndSend(ctx, getUI('out_of_stock_alert', userLang), Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
 
     await ctx.answerCbQuery('Connecting to crypto payment gateway...');
 
-    // HARD GUARD: NEVER create an automatic-crypto order when NOWPayments is not
-    // connected. This prevents fake/unpayable orders from piling up.
     if (typeof cryptoGateway.isConfigured === 'function' && !cryptoGateway.isConfigured()) {
       await ctx.answerCbQuery('Automatic payment gateway is not active.', { show_alert: true });
       return cleanAndSend(ctx,
-        `⚠️ <b>AUTOMATIC PAYMENT NOT AVAILABLE</b>\n\n` +
-        `The <b>Auto Crypto Pay</b> method is currently inactive because the gateway (NOWPayments) is not connected.\n\n` +
-        `Please use <b>Manual Payment</b> (QRIS / E-Wallet / Crypto Transfer) to complete your purchase.`,
+        `<b>AUTOMATIC PAYMENT NOT AVAILABLE</b>\n\n` +
+        `The Auto Crypto Pay method is currently inactive because the gateway (NOWPayments) is not connected.\n\n` +
+        `Please use Manual Payment (QRIS / E-Wallet / Crypto Transfer) to complete your purchase.`,
         Markup.inlineKeyboard([
-          [Markup.button.callback('💳 Manual Pay', `buy_manual_${productId}`)],
-          [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+          [Markup.button.callback('Manual Pay', `buy_manual_${productId}`)],
+          [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
         ])
       );
     }
 
     const rawProduct = await dbService.getProduct(productId);
     if (!rawProduct) {
-      return cleanAndSend(ctx, '❌ Product not found or unavailable.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+      return cleanAndSend(ctx, 'Product not found or unavailable.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
     const product = getLocalizedProduct(rawProduct, userLang);
     const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
 
-const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
+    const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
-    // Generate NOWPayments transaction (only reachable when configured)
     const nowpaymentsResult = await cryptoGateway.createPayment({
       orderId,
       priceAmountUsd: product.price_usd,
@@ -764,16 +802,15 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       callbackUrl: ''
     });
 
-    // If the gateway call itself failed, do NOT create a fake order.
     if (!nowpaymentsResult.success || !nowpaymentsResult.payAddress) {
       await ctx.answerCbQuery('Gateway failed to create invoice.', { show_alert: true });
       return cleanAndSend(ctx,
-        `❌ <b>FAILED TO CREATE AUTOMATIC INVOICE</b>\n\n` +
+        `<b>FAILED TO CREATE AUTOMATIC INVOICE</b>\n\n` +
         `${nowpaymentsResult.error || 'Automatic payment gateway is currently down.'}\n\n` +
-        `Please try again later or use <b>Manual Payment</b>.`,
+        `Please try again later or use Manual Payment.`,
         Markup.inlineKeyboard([
-          [Markup.button.callback('💳 Manual Pay', `buy_manual_${productId}`)],
-          [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+          [Markup.button.callback('Manual Pay', `buy_manual_${productId}`)],
+          [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
         ])
       );
     }
@@ -782,7 +819,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const payAmount = nowpaymentsResult.payAmount || product.price_usd;
     const paymentId = String(nowpaymentsResult.paymentId || '');
 
-    // Persist order in Firestore with initial PENDING status
     const orderDoc = {
       order_id: orderId,
       user_id: telegramId,
@@ -809,91 +845,79 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const qrUrl = getQrCodeUrl(cryptoAddress, 300);
     const tokenUrl = nowpaymentsResult.paymentUrl || getTokenExplorerUrl('USDT (TRC-20)', cryptoAddress);
 
-    const invoiceText = `🧾 <b>PAYMENT INVOICE: #${orderId}</b>\n\n` +
-      `📦 <b>Product:</b> ${product.title}\n` +
-      `💰 <b>Total Due:</b> <code>${payAmount} USDT</code> (TRC-20)\n` +
-      `📬 <b>Token Deposit Address:</b>\n<code>${cryptoAddress}</code>\n\n` +
-      `🔗 <b>Token Explorer URL:</b>\n<a href="${tokenUrl}">${tokenUrl}</a>\n\n` +
-      `⚠️ <b>DELIVERY POLICY:</b>\n` +
+    const invoiceText = `<b>PAYMENT INVOICE: #${orderId}</b>\n\n` +
+      `Product: ${product.title}\n` +
+      `Total Due: <code>${payAmount} USDT</code> (TRC-20)\n` +
+      `Token Deposit Address:\n<code>${cryptoAddress}</code>\n\n` +
+      `Token Explorer URL:\n<a href="${tokenUrl}">${tokenUrl}</a>\n\n` +
+      `DELIVERY POLICY:\n` +
       `1. Transfer exact amount to the address above (scan QR code).\n` +
-      `2. After transfer, click <b>"${getUI('btn_check_payment', userLang)}"</b> below.\n` +
+      `2. After transfer, click "${stripEmojis(getUI('btn_check_payment', userLang))}" below.\n` +
       `3. Account will ONLY be sent automatically once transaction is detected & confirmed on blockchain.`;
 
     const buttons = [
-      [Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${orderId}`)],
-      [Markup.button.url('🔍 Open Token Explorer', tokenUrl)],
-      [Markup.button.callback(getUI('btn_cancel_order', userLang), `cancel_order_${orderId}`)],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      [Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${orderId}`)],
+      [Markup.button.url('Open Token Explorer', tokenUrl)],
+      [Markup.button.callback(stripEmojis(getUI('btn_cancel_order', userLang)), `cancel_order_${orderId}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ];
 
     await cleanAndSend(ctx, invoiceText, Markup.inlineKeyboard(buttons), { photo: qrUrl, state: `order_${orderId}`, translate: true });
   });
 
-  // Action: Buy via Manual Payment Methods (QRIS, E-Wallet, Crypto)
   bot.action(/^buy_manual_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
     const userLang = await getUserLang(ctx);
 
-    // Strict stock check
     const stockCount = await dbService.getAvailableStockCount(productId);
     if (stockCount <= 0) {
-      await ctx.answerCbQuery(getUI('out_of_stock_alert', userLang), { show_alert: true });
+      await ctx.answerCbQuery(stripEmojis(getUI('out_of_stock_alert', userLang)), { show_alert: true });
       return;
     }
 
     const rawProduct = await dbService.getProduct(productId);
     if (!rawProduct) {
-      return cleanAndSend(ctx, '❌ Product not found or unavailable.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+      return cleanAndSend(ctx, 'Product not found or unavailable.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
     const product = getLocalizedProduct(rawProduct, userLang);
 
-    // Check both general payment methods (QRIS/E-Wallet) and crypto wallets
     const pMethods = await dbService.getActivePaymentMethods().catch(() => []);
     const wallets = await dbService.getActiveCryptoWallets().catch(() => []);
 
     const buttons = [];
 
-    // If custom payment methods exist
     if (pMethods && pMethods.length > 0) {
       for (const pm of pMethods) {
-        const icon = pm.type === 'qris' ? '💳' : pm.type === 'ewallet' ? '📱' : pm.type === 'bank' ? '🏦' : '🌐';
         buttons.push([
-          Markup.button.callback(`${icon} ${pm.name}`, `pay_custom::${productId}::${pm.method_id}`)
+          Markup.button.callback(stripEmojis(pm.name), `pay_custom::${productId}::${pm.method_id}`)
         ]);
       }
-    } else {
-      // Default quick QRIS / E-Wallet option
     }
 
-    // Crypto manual option
     if (wallets && wallets.length > 0) {
       buttons.push([
-        Markup.button.callback('🪙 Manual Crypto Wallet Transfer', `pay_crypto_select_${productId}`)
+        Markup.button.callback('Manual Crypto Wallet Transfer', `pay_crypto_select_${productId}`)
       ]);
     }
 
-    // Coupon redemption entry point
-    buttons.push([Markup.button.callback('🎟️ Apply Discount Coupon', `redeem_coupon_${productId}`)]);
+    buttons.push([Markup.button.callback('Apply Discount Coupon', `redeem_coupon_${productId}`)]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), `prod_${productId}`)]);
 
-    buttons.push([Markup.button.callback(getUI('btn_back_catalog', userLang), `prod_${productId}`)]);
-
-    // Show any coupon already applied to this product session
     const sessionForCoupon = await dbService.getUserSession(String(ctx.from.id)).catch(() => null);
     const activeCoupon = sessionForCoupon?.applied_coupon;
-    const couponNote = activeCoupon ? `\n🎟️ <b>Active coupon:</b> <code>${activeCoupon.code}</code> (-Rp ${Number(activeCoupon.discount_amount || 0).toLocaleString('id-ID')})` : '';
+    const couponNote = activeCoupon ? `\nActive coupon: <code>${activeCoupon.code}</code> (-Rp ${Number(activeCoupon.discount_amount || 0).toLocaleString('id-ID')})` : '';
 
-    const msg = `💳 <b>SELECT MANUAL PAYMENT METHOD</b>\n\n` +
-      `📦 Product: <b>${product.title}</b>\n` +
-      `💵 Price: <b>$${product.price_usd}</b> / <b>Rp ${(product.price_idr || 0).toLocaleString('id-ID')}</b>${couponNote}\n\n` +
+    const msg = `<b>SELECT MANUAL PAYMENT METHOD</b>\n\n` +
+      `Product: <b>${product.title}</b>\n` +
+      `Price: <b>$${product.price_usd}</b> / <b>Rp ${(product.price_idr || 0).toLocaleString('id-ID')}</b>${couponNote}\n\n` +
       `Please select your preferred payment method:`;
 
     await cleanAndSend(ctx, msg, Markup.inlineKeyboard(buttons), { state: 'select_payment_method' });
   });
 
-  // Action: Prompt buyer to type a coupon code for a given product
   bot.action(/^redeem_coupon_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
@@ -905,18 +929,17 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       updated_at: new Date().toISOString()
     });
 
-    const msg = `🎟️ <b>REDEEM COUPON CODE</b>\n\n` +
+    const msg = `<b>REDEEM COUPON CODE</b>\n\n` +
       `Please send your <b>coupon code</b> in this chat (e.g. <code>DISKON10</code>).\n\n` +
       `<i>The system will automatically deduct the amount at checkout.</i>`;
 
     const buttons = [
-      [Markup.button.callback(getUI('btn_back', userLang), `buy_manual_${productId}`)]
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), `buy_manual_${productId}`)]
     ];
 
     await cleanAndSend(ctx, msg, Markup.inlineKeyboard(buttons), { state: `coupon_for_${productId}` });
   });
 
-  // Action: Select crypto wallets list
   bot.action(/^pay_crypto_select_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
@@ -926,18 +949,17 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const wallets = await dbService.getActiveCryptoWallets();
 
     const buttons = (wallets || []).map(w => [
-      Markup.button.callback(`🪙 ${w.network}`, `payw::${productId}::${w.wallet_id || w.id}`)
+      Markup.button.callback(stripEmojis(w.network), `payw::${productId}::${w.wallet_id || w.id}`)
     ]);
-    buttons.push([Markup.button.callback(getUI('btn_back', userLang), `buy_manual_${productId}`)]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), `buy_manual_${productId}`)]);
 
-    const msg = `🪙 <b>SELECT BLOCKCHAIN NETWORK</b>\n\n` +
+    const msg = `<b>SELECT BLOCKCHAIN NETWORK</b>\n\n` +
       `Product: <b>${product.title}</b> ($${product.price_usd})\n` +
       `Choose a crypto wallet network below to view the destination address:`;
 
     await cleanAndSend(ctx, msg, Markup.inlineKeyboard(buttons), { state: 'select_wallet' });
   });
 
-  // Action: Pay via Custom Payment Method (QRIS / E-Wallet / Bank)
   bot.action(/^pay_custom::(.+)::(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
@@ -952,21 +974,20 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       orderPrefix: 'S-',
       qrDataBuilder: (orderId, total) => `ORDER:${orderId}:${total}`,
       titleBuilder: ({ orderId, product, totalAmountIdr, uniqueCode, method }) =>
-        `🧾 <b>PAYMENT INVOICE: #${orderId}</b>\n\n` +
-        `📦 <b>Product:</b> ${product.title}\n` +
-        `💰 <b>Total Pay:</b> <code>Rp ${totalAmountIdr.toLocaleString('id-ID')}</code>\n` +
+        `<b>PAYMENT INVOICE: #${orderId}</b>\n\n` +
+        `Product: ${product.title}\n` +
+        `Total Pay: <code>Rp ${totalAmountIdr.toLocaleString('id-ID')}</code>\n` +
         `<i>(Includes unique 3-digit code: +${uniqueCode} for auto-verification)</i>\n\n` +
-        `💳 <b>Method:</b> ${method?.name || 'QRIS'}\n` +
-        (method?.account_number ? `📬 <b>Account Number:</b>\n<code>${method.account_number}</code> (${method.account_name || 'Admin'})\n\n` : ''),
+        `Method: ${method?.name || 'QRIS'}\n` +
+        (method?.account_number ? `Account Number:\n<code>${method.account_number}</code> (${method.account_name || 'Admin'})\n\n` : ''),
       instructionsBuilder: ({ totalAmountIdr, userLang }) =>
-        `📋 <b>INSTRUCTIONS:</b>\n` +
+        `INSTRUCTIONS:\n` +
         `1. Transfer exact amount <b>Rp ${totalAmountIdr.toLocaleString('id-ID')}</b> for easy recognition.\n` +
-        `2. After transfer, click <b>"${getUI('btn_send_txid', userLang)}"</b> below to upload payment proof.\n` +
+        `2. After transfer, click <b>"${stripEmojis(getUI('btn_send_txid', userLang))}"</b> below to upload payment proof.\n` +
         `3. Your digital account will be sent immediately after payment verification.`
     });
   });
 
-  // Action: Pay via Instant QRIS
   bot.action(/^pay_qris_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const productId = ctx.match[1];
@@ -977,21 +998,20 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       orderPrefix: 'S-QRIS',
       qrDataBuilder: (orderId, total) => `QRIS:${orderId}:${total}`,
       titleBuilder: ({ orderId, product, totalAmountIdr, uniqueCode }) =>
-        `🧾 <b>QRIS INVOICE: #${orderId}</b>\n\n` +
-        `📦 <b>Product:</b> ${product.title}\n` +
-        `💰 <b>Total Due:</b> <code>Rp ${totalAmountIdr.toLocaleString('id-ID')}</code>\n` +
+        `<b>QRIS INVOICE: #${orderId}</b>\n\n` +
+        `Product: ${product.title}\n` +
+        `Total Due: <code>Rp ${totalAmountIdr.toLocaleString('id-ID')}</code>\n` +
         `<i>(Includes unique transfer code <b>+${uniqueCode}</b>)</i>\n\n` +
-        `🌐 <b>Scannable with:</b> GoPay, OVO, DANA, BCA, BRI, Mandiri, ShopeePay, etc.\n\n`,
+        `Scannable with: GoPay, OVO, DANA, BCA, BRI, Mandiri, ShopeePay, etc.\n\n`,
       instructionsBuilder: ({ totalAmountIdr, userLang }) =>
-        `📋 <b>GUIDE:</b>\n` +
+        `GUIDE:\n` +
         `1. Scan QR Code above using your bank or e-wallet app.\n` +
         `2. Enter exact amount <b>Rp ${totalAmountIdr.toLocaleString('id-ID')}</b>.\n` +
-        `3. Click <b>"${getUI('btn_send_txid', userLang)}"</b> to send screenshot proof.\n` +
+        `3. Click <b>"${stripEmojis(getUI('btn_send_txid', userLang))}"</b> to send screenshot proof.\n` +
         `4. Your digital account will be sent immediately after approval.`
     });
   });
 
-  // Action: Selected specific wallet for manual payment (Supports both payw:: and pay_wallet_)
   bot.action(/^(?:payw::|pay_wallet_)(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const rawPayload = ctx.match[1];
@@ -1007,7 +1027,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       productId = parts[0];
       walletId = parts[1];
     } else {
-      // Smart extraction for legacy format or underscore-containing IDs
       const allProducts = await dbService.getProducts();
       const matchedProd = allProducts?.find(p => rawPayload.startsWith(p.product_id + '_'));
       if (matchedProd) {
@@ -1020,7 +1039,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       }
     }
 
-    // Retrieve real product from Firestore
     let rawProduct = await dbService.getProduct(productId);
     if (!rawProduct) {
       const allProducts = await dbService.getProducts();
@@ -1031,22 +1049,20 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     }
 
     if (!rawProduct) {
-      return cleanAndSend(ctx, '❌ Product not found or unavailable.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+      return cleanAndSend(ctx, 'Product not found or unavailable.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
 
-    // Strict stock check
     const stockCount = await dbService.getAvailableStockCount(productId);
     if (stockCount <= 0) {
       return cleanAndSend(ctx, getUI('out_of_stock_alert', userLang), Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
 
     const product = getLocalizedProduct(rawProduct, userLang);
 
-    // Retrieve real crypto wallet from Firestore
     let wallet = null;
     if (walletId) {
       wallet = await dbService.getCryptoWallet(walletId);
@@ -1059,14 +1075,14 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     }
 
     if (!wallet) {
-      return cleanAndSend(ctx, '⚠️ Crypto wallet not found or disabled.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('btn_back_catalog', userLang), 'menu_catalog')]
+      return cleanAndSend(ctx, 'Crypto wallet not found or disabled.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('btn_back_catalog', userLang)), 'menu_catalog')]
       ]));
     }
 
     const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
 
-const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
+    const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
     const currencyCode = wallet.currency || (wallet.network.includes('TON') ? 'TON' : wallet.network.includes('BTC') ? 'BTC' : wallet.network.includes('SOL') ? 'SOL' : 'USDT');
 
@@ -1094,31 +1110,30 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     const qrUrl = wallet.qr_url || getQrCodeUrl(wallet.address, 300);
 
-    const invoiceText = `🧾 <b>MANUAL PAYMENT INVOICE: #${orderId}</b>\n\n` +
-      `📦 <b>Product:</b> ${product.title}\n` +
-      `💰 <b>Total Due:</b> <code>${product.price_usd} ${currencyCode}</code> (${wallet.network})\n` +
-      `🌐 <b>Blockchain Network:</b> ${wallet.network}\n` +
-      `📬 <b>Deposit Address:</b>\n<code>${wallet.address}</code>\n` +
+    const invoiceText = `<b>MANUAL PAYMENT INVOICE: #${orderId}</b>\n\n` +
+      `Product: ${product.title}\n` +
+      `Total Due: <code>${product.price_usd} ${currencyCode}</code> (${wallet.network})\n` +
+      `Blockchain Network: ${wallet.network}\n` +
+      `Deposit Address:\n<code>${wallet.address}</code>\n` +
       `<i>(Tap/click address above to copy instantly)</i>\n\n` +
-      `🖼️ <b>QR Code Image Link:</b>\n<a href="${qrUrl}">${qrUrl}</a>\n\n` +
-      `📋 <b>PAYMENT GUIDE:</b>\n` +
+      `QR Code Image Link:\n<a href="${qrUrl}">${qrUrl}</a>\n\n` +
+      `PAYMENT GUIDE:\n` +
       `1. Transfer exact amount to the deposit address above (or scan QR code).\n` +
-      `2. After transfer, click <b>"📝 Send TXID / Proof"</b> to submit transaction hash or receipt.\n` +
+      `2. After transfer, click "Send TXID / Proof" to submit transaction hash or receipt.\n` +
       `3. You can check status or view payment proof after verification.\n` +
       `4. Official credentials will be auto-sent here immediately after confirmation.`;
 
     const buttons = [
-      [Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${orderId}`)],
-      [Markup.button.url(getUI('btn_open_qr', userLang), qrUrl)],
-      [Markup.button.callback(getUI('btn_send_txid', userLang), `prompt_txid_${orderId}`)],
-      [Markup.button.callback(getUI('btn_cancel_order', userLang), `cancel_order_${orderId}`)],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      [Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${orderId}`)],
+      [Markup.button.url(stripEmojis(getUI('btn_open_qr', userLang)), qrUrl)],
+      [Markup.button.callback(stripEmojis(getUI('btn_send_txid', userLang)), `prompt_txid_${orderId}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_cancel_order', userLang)), `cancel_order_${orderId}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ];
 
     await cleanAndSend(ctx, invoiceText, Markup.inlineKeyboard(buttons), { photo: qrUrl, state: `order_${orderId}`, translate: true });
   });
 
-  // Action: Re-view QR Code directly
   bot.action(/^view_qr_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const orderId = ctx.match[1];
@@ -1126,36 +1141,35 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const order = await dbService.getOrder(orderId);
     if (!order) return;
     const qrUrl = getQrCodeUrl(order.crypto_address, 320);
-    const text = `🖼️ <b>PAYMENT QR CODE: #${order.order_id}</b>\n\n` +
-      `📦 <b>Product:</b> ${order.product_title}\n` +
-      `💰 <b>Total Due:</b> <code>${order.amount} ${order.currency || 'USD'}</code>\n` +
-      `🌐 <b>Network:</b> ${order.crypto_network || '-'}\n` +
-      `📬 <b>Deposit Address:</b>\n<code>${order.crypto_address}</code>\n\n` +
+    const text = `<b>PAYMENT QR CODE: #${order.order_id}</b>\n\n` +
+      `Product: ${order.product_title}\n` +
+      `Total Due: <code>${order.amount} ${order.currency || 'USD'}</code>\n` +
+      `Network: ${order.crypto_network || '-'}\n` +
+      `Deposit Address:\n<code>${order.crypto_address}</code>\n\n` +
       `<i>Scan this QR Code using your crypto wallet.</i>`;
     const buttons = [
-      [Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${order.order_id}`)],
-      [Markup.button.callback(getUI('btn_send_txid', userLang), `prompt_txid_${order.order_id}`)],
-      [Markup.button.callback(getUI('btn_back_order', userLang), `view_order_${order.order_id}`)]
+      [Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${order.order_id}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_send_txid', userLang)), `prompt_txid_${order.order_id}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_back_order', userLang)), `view_order_${order.order_id}`)]
     ];
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { photo: qrUrl, state: `order_${order.order_id}` });
   });
 
-  // Action: Prompt TXID for manual payment
   bot.action(/^prompt_txid_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const orderId = ctx.match[1];
     const userLang = await getUserLang(ctx);
 
-    const promptText = `📝 <b>SUBMIT TRANSACTION PROOF / TXID</b>\n\n` +
-      `🆔 Order ID: <code>${orderId}</code>\n\n` +
+    const promptText = `<b>SUBMIT TRANSACTION PROOF / TXID</b>\n\n` +
+      `Order ID: <code>${orderId}</code>\n\n` +
       `You can submit payment proof in two ways:\n` +
-      `1. <b>Type/Paste Transaction Hash (TXID):</b> Copy from your wallet and send here.\n` +
-      `2. <b>Send Screenshot/Photo Receipt:</b> Upload your payment proof image directly.\n\n` +
+      `1. Type/Paste Transaction Hash (TXID): Copy from your wallet and send here.\n` +
+      `2. Send Screenshot/Photo Receipt: Upload your payment proof image directly.\n\n` +
       `<i>Admin will verify and your digital account will be sent automatically.</i>`;
 
     await cleanAndSend(ctx, promptText, Markup.inlineKeyboard([
-      [Markup.button.callback(getUI('btn_back_invoice', userLang), `check_pay_${orderId}`)],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      [Markup.button.callback(stripEmojis(getUI('btn_back_invoice', userLang)), `check_pay_${orderId}`)],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ]), { state: `submit_txid_${orderId}`, translate: true });
   });
 
@@ -1166,17 +1180,16 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const order = await dbService.getOrder(orderId);
 
     if (!order) {
-      await ctx.answerCbQuery('❌ Order not found.', { show_alert: true });
+      await ctx.answerCbQuery('Order not found.', { show_alert: true });
       return;
     }
 
     // CASE 1: Order is ALREADY VERIFIED or PAID
-    if (order.payment_status === 'PAID' || order.payment_status === 'VERIFIED_BY_ADMIN') {
-      await ctx.answerCbQuery('✅ Payment verified!', { show_alert: false });
+    if (order.payment_status === 'PAID' || order.payment_status === 'VERIFIED_BY_ADMIN' || order.payment_status === 'APPROVED') {
+      await ctx.answerCbQuery('Payment verified!', { show_alert: false });
 
       let delivered = order.account_delivered;
       if (!delivered) {
-        // Atomically claim available stock now
         const stock = await dbService.claimAvailableStock(order.product_id, order.order_id);
         if (stock && stock.account_data) {
           delivered = stock.account_data;
@@ -1189,37 +1202,7 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       }
 
       if (delivered) {
-        const parsed = parseAccountCredential(delivered);
-        let credBlock = '';
-        if (parsed.email && parsed.password) {
-          credBlock = `📧 <b>Email:</b> <code>${parsed.email}</code>\n` +
-                      `🔑 <b>Password:</b> <code>${parsed.password}</code>\n` +
-                      (parsed.cookie ? `🍪 <b>Session Cookie:</b> <code>${parsed.cookie}</code>\n` : '') +
-                      (parsed.apiKey ? `🔑 <b>API Key:</b> <code>${parsed.apiKey}</code>\n` : '') +
-                      (parsed.note ? `📝 <b>Note:</b> ${parsed.note}\n` : '');
-        } else {
-          credBlock = `<code>${delivered}</code>`;
-        }
-
-        // Fetch product to get product_url for digital products
-        const rawProduct = await dbService.getProduct(order.product_id);
-        const productUrlLine = rawProduct?.product_url
-          ? `\n🔗 <b>Product Access URL:</b>\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n`
-          : '';
-
-        const successText = `${getUI('payment_success_header', userLang)}\n\n` +
-          `📦 <b>Product:</b> ${order.product_title}\n` +
-          `🆔 <b>Order ID:</b> <code>${order.order_id}</code>${productUrlLine}\n` +
-          `${getUI('credentials_label', userLang)}\n` +
-          `${credBlock}\n\n` +
-          `${getUI('warranty_tip', userLang)}`;
-
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('🧾 View Successful Payment Receipt', `view_receipt_${order.order_id}`)],
-          [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-          [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
-        ]);
-        return cleanAndSend(ctx, successText, keyboard);
+        return await sendFullOrderReceipt(ctx, bot, dbService, order, delivered);
       }
     }
 
@@ -1228,9 +1211,15 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       try {
         const nowCheck = await cryptoGateway.getPaymentStatus(order.payment_id);
         if (nowCheck.success && nowCheck.isPaid) {
-          // Blockchain confirms payment is finished/confirmed!
           const stock = await dbService.claimAvailableStock(order.product_id, order.order_id);
           const delivered = stock && stock.account_data ? stock.account_data : 'Credential delivered via blockchain auto-pay';
+
+          const updatedOrder = {
+            ...order,
+            payment_status: 'PAID',
+            account_delivered: delivered,
+            updated_at: new Date().toISOString()
+          };
 
           await dbService.updateOrder(order.order_id, {
             payment_status: 'PAID',
@@ -1238,36 +1227,8 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
             updated_at: new Date().toISOString()
           });
 
-          await ctx.answerCbQuery('✅ Blockchain payment confirmed!', { show_alert: true });
-
-          const parsed = parseAccountCredential(delivered);
-          let credBlock = '';
-          if (parsed.email && parsed.password) {
-            credBlock = `📧 <b>Email:</b> <code>${parsed.email}</code>\n` +
-                        `🔑 <b>Password:</b> <code>${parsed.password}</code>\n` +
-                        (parsed.cookie ? `🍪 <b>Session Cookie:</b> <code>${parsed.cookie}</code>\n` : '');
-          } else {
-            credBlock = `<code>${delivered}</code>`;
-          }
-
-          // Fetch product to get product_url for digital products
-          const rawProduct = await dbService.getProduct(order.product_id);
-          const productUrlLine = rawProduct?.product_url
-            ? `\n🔗 <b>Product Access URL:</b>\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n`
-            : '';
-
-          const successText = `${getUI('payment_success_header', userLang)}\n\n` +
-            `📦 <b>Product:</b> ${order.product_title}\n` +
-            `🆔 <b>Order ID:</b> <code>${order.order_id}</code>${productUrlLine}\n` +
-            `${getUI('credentials_label', userLang)}\n` +
-            `${credBlock}\n\n` +
-            `${getUI('warranty_tip', userLang)}`;
-
-          return cleanAndSend(ctx, successText, Markup.inlineKeyboard([
-            [Markup.button.callback('🧾 View Successful Payment Receipt', `view_receipt_${order.order_id}`)],
-            [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-            [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
-          ]));
+          await ctx.answerCbQuery('Blockchain payment confirmed!', { show_alert: true });
+          return await sendFullOrderReceipt(ctx, bot, dbService, updatedOrder, delivered);
         }
       } catch (e) {
         console.warn('NOWPayments status check failed:', e.message);
@@ -1275,83 +1236,76 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     }
 
     // CASE 3: Payment is UNVERIFIED / UNPAID
-    // STRICT REFUSAL: NEVER deliver accounts if payment is not confirmed!
-    const notice = getUI('payment_pending_notice', userLang);
+    const notice = stripEmojis(getUI('payment_pending_notice', userLang));
     await ctx.answerCbQuery(notice, { show_alert: true });
 
     const isManualMethod = ['crypto_manual', 'qris', 'ewallet', 'bank', 'bank_transfer', 'manual_idr'].includes(order.payment_method);
     const alreadySubmittedProof = Boolean(order.tx_hash || order.receipt_file_id || order.receipt_image_url);
-    const localizedStatus = getLocalizedPaymentStatus(order.payment_status, userLang);
-    const localizedMethod = getLocalizedPaymentMethod(order.payment_method, userLang);
+    const localizedStatus = stripEmojis(getLocalizedPaymentStatus(order.payment_status, userLang));
+    const localizedMethod = stripEmojis(getLocalizedPaymentMethod(order.payment_method, userLang));
     const amountLine = (order.currency === 'IDR' || order.total_amount_idr)
       ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
       : `${order.amount} ${order.currency || 'USD'}`;
 
-    let reminderMsg = `⏳ <b>${localizedStatus.toUpperCase()} (#${order.order_id})</b>\n\n` +
+    let reminderMsg = `<b>${localizedStatus.toUpperCase()} (#${order.order_id})</b>\n\n` +
       `${notice}\n\n` +
-      `📦 <b>Product:</b> ${order.product_title}\n` +
-      `💰 <b>Total Due:</b> <code>${amountLine}</code>\n` +
+      `Product: ${order.product_title}\n` +
+      `Total Due: <code>${amountLine}</code>\n` +
       (order.unique_code ? `<i>(Includes unique transfer code +${order.unique_code})</i>\n` : '') +
-      `🌐 <b>Method:</b> ${localizedMethod}\n\n`;
+      `Method: ${localizedMethod}\n\n`;
 
-    // Method-aware payment info so the buyer never sees a wrong address.
     if (isManualMethod) {
-      reminderMsg += `📬 <b>Payment Destination:</b>\n<code>${order.crypto_address || '-'}</code>\n` +
-        (order.crypto_network ? `🏷️ <b>${order.crypto_network}</b>\n` : '') + '\n';
+      reminderMsg += `Payment Destination:\n<code>${order.crypto_address || '-'}</code>\n` +
+        (order.crypto_network ? `${order.crypto_network}\n` : '') + '\n';
     } else {
-      reminderMsg += `📬 <b>Blockchain Deposit Address:</b>\n<code>${order.crypto_address}</code>\n\n`;
+      reminderMsg += `Blockchain Deposit Address:\n<code>${order.crypto_address}</code>\n\n`;
     }
 
-    // Clear guidance depending on whether the buyer already uploaded proof.
     if (isManualMethod) {
       reminderMsg += alreadySubmittedProof
-        ? `✅ <b>Your payment proof has been received</b> and is awaiting admin verification.\n` +
+        ? `<b>Your payment proof has been received</b> and is awaiting admin verification.\n` +
           `Please wait—your account will be sent automatically upon approval.\n\n`
-        : `⚠️ <b>You haven’t sent payment proof yet.</b>\n` +
-          `Please transfer the exact amount above, then press <b>"${getUI('btn_send_txid', userLang)}"</b> to upload your receipt/mutation for verification.\n\n`;
+        : `<b>You haven't sent payment proof yet.</b>\n` +
+          `Please transfer the exact amount above, then press <b>"${stripEmojis(getUI('btn_send_txid', userLang))}"</b> to upload your receipt/mutation for verification.\n\n`;
     } else {
       reminderMsg += order.tx_hash
-        ? `📝 <b>Proof Submitted:</b> <code>${order.tx_hash}</code> (${localizedStatus})\n\n`
+        ? `Proof Submitted: <code>${order.tx_hash}</code> (${localizedStatus})\n\n`
         : `Please complete payment, then check again after the network confirms the transaction.\n\n`;
     }
 
     const buttons = [];
     if (isManualMethod) {
-      // Primary action for manual methods: upload proof (or re-upload).
       buttons.push([Markup.button.callback(
-        alreadySubmittedProof ? `🔄 Resend Payment Proof` : getUI('btn_send_txid', userLang),
+        alreadySubmittedProof ? `Resend Payment Proof` : stripEmojis(getUI('btn_send_txid', userLang)),
         `prompt_txid_${orderId}`
       )]);
       if (order.crypto_address && String(order.crypto_address).startsWith('http')) {
-        buttons.push([Markup.button.url(getUI('btn_open_qr', userLang), order.crypto_address)]);
+        buttons.push([Markup.button.url(stripEmojis(getUI('btn_open_qr', userLang)), order.crypto_address)]);
       } else {
-        buttons.push([Markup.button.url(getUI('btn_open_qr', userLang), getQrCodeUrl(order.crypto_address || order.order_id, 300))]);
+        buttons.push([Markup.button.url(stripEmojis(getUI('btn_open_qr', userLang)), getQrCodeUrl(order.crypto_address || order.order_id, 300))]);
       }
     } else {
-      buttons.push([Markup.button.url(getUI('btn_open_qr', userLang), getQrCodeUrl(order.crypto_address, 300))]);
+      buttons.push([Markup.button.url(stripEmojis(getUI('btn_open_qr', userLang)), getQrCodeUrl(order.crypto_address, 300))]);
     }
-    buttons.push([Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${orderId}`)]);
-    buttons.push([Markup.button.callback(getUI('btn_cancel_order', userLang), `cancel_order_${orderId}`)]);
-    buttons.push([Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${orderId}`)]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_cancel_order', userLang)), `cancel_order_${orderId}`)]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]);
 
     await cleanAndSend(ctx, reminderMsg, Markup.inlineKeyboard(buttons), { state: `order_${orderId}`, translate: true });
   });
 
-  // Action: Cancel Order (Auto-deleted to conserve database storage)
   bot.action(/^cancel_order_(.+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     const userLang = await getUserLang(ctx);
     await ctx.answerCbQuery('Order cancelled.');
-    // Delete immediately from database storage so database remains lean
     await dbService.deleteOrder(orderId);
 
-    await cleanAndSend(ctx, `❌ <b>Order <code>${orderId}</code> has been cancelled & automatically removed from the system.</b>`, Markup.inlineKeyboard([
-      [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+    await cleanAndSend(ctx, `<b>Order <code>${orderId}</code> has been cancelled & automatically removed from the system.</b>`, Markup.inlineKeyboard([
+      [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ]));
   });
 
-  // Action: My Orders (Interactive with full history & credential retrieval)
   bot.action('menu_orders', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -1361,9 +1315,9 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const userOrders = await dbService.getUserOrders(telegramId);
 
     if (!userOrders || userOrders.length === 0) {
-      return cleanAndSend(ctx, '📦 <i>You have no order history yet.</i>', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-        [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      return cleanAndSend(ctx, '<i>You have no order history yet.</i>', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+        [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
       ]));
     }
 
@@ -1371,31 +1325,24 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const buttons = [];
 
     userOrders.slice(0, 6).forEach((o, i) => {
-      const statusIcon = o.payment_status === 'PAID' || o.payment_status === 'VERIFIED_BY_ADMIN'
-        ? '✅'
-        : o.payment_status === 'PENDING'
-          ? '⏳'
-          : '❌';
+      const localizedStatus = stripEmojis(getLocalizedPaymentStatus(o.payment_status, userLang));
 
-      const localizedStatus = getLocalizedPaymentStatus(o.payment_status, userLang);
-
-      text += `${i + 1}. ${statusIcon} <b>${o.product_title}</b> ($${o.amount})\n` +
+      text += `${i + 1}. <b>${o.product_title}</b> ($${o.amount})\n` +
               `   ID: <code>${o.order_id}</code> | Status: <b>${localizedStatus}</b>\n` +
               (o.tx_hash ? `   TXID: <code>${o.tx_hash.slice(0, 16)}...</code>\n` : '') +
               `\n`;
 
       buttons.push([
-        Markup.button.callback(`${statusIcon} #${o.order_id.slice(-6)} - ${o.product_title.slice(0, 20)}`, `view_order_${o.order_id}`)
+        Markup.button.callback(`#${o.order_id.slice(-6)} - ${o.product_title.slice(0, 20)}`, `view_order_${o.order_id}`)
       ]);
     });
 
-    buttons.push([Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')]);
-    buttons.push([Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')]);
+    buttons.push([Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons));
   });
 
-  // Action: View specific order details & retrieve credentials
   bot.action(/^view_order_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const orderId = ctx.match[1];
@@ -1403,37 +1350,35 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const order = await dbService.getOrder(orderId);
 
     if (!order) {
-      return cleanAndSend(ctx, '❌ Order not found.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders')],
-        [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      return cleanAndSend(ctx, 'Order not found.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('menu_orders', userLang)), 'menu_orders')],
+        [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
       ]));
     }
 
-    const isPaid = order.payment_status === 'PAID' || order.payment_status === 'VERIFIED_BY_ADMIN';
+    const isPaid = order.payment_status === 'PAID' || order.payment_status === 'VERIFIED_BY_ADMIN' || order.payment_status === 'APPROVED';
     const isPending = order.payment_status === 'PENDING';
 
-    // Auto-translated rich receipt details
     const detailMsg = formatLocalizedOrderReceipt(order, userLang);
 
     const actionButtons = [];
     if (isPaid) {
-      actionButtons.push([Markup.button.callback(getUI('btn_view_receipt', userLang), `view_receipt_${order.order_id}`)]);
+      actionButtons.push([Markup.button.callback(stripEmojis(getUI('btn_view_receipt', userLang)), `view_receipt_${order.order_id}`)]);
     } else if (isPending) {
       const qrUrl = getQrCodeUrl(order.crypto_address, 300);
-      actionButtons.push([Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${order.order_id}`)]);
-      actionButtons.push([Markup.button.url(getUI('btn_open_qr', userLang), qrUrl)]);
+      actionButtons.push([Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${order.order_id}`)]);
+      actionButtons.push([Markup.button.url(stripEmojis(getUI('btn_open_qr', userLang)), qrUrl)]);
       if (order.payment_method === 'crypto_manual' || order.payment_method === 'qris' || order.payment_method === 'ewallet' || order.payment_method === 'bank_transfer') {
-        actionButtons.push([Markup.button.callback(getUI('btn_send_txid', userLang), `prompt_txid_${order.order_id}`)]);
+        actionButtons.push([Markup.button.callback(stripEmojis(getUI('btn_send_txid', userLang)), `prompt_txid_${order.order_id}`)]);
       }
-      actionButtons.push([Markup.button.callback(getUI('btn_cancel_order', userLang), `cancel_order_${order.order_id}`)]);
+      actionButtons.push([Markup.button.callback(stripEmojis(getUI('btn_cancel_order', userLang)), `cancel_order_${order.order_id}`)]);
     }
-    actionButtons.push([Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders')]);
-    actionButtons.push([Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]);
+    actionButtons.push([Markup.button.callback(stripEmojis(getUI('menu_orders', userLang)), 'menu_orders')]);
+    actionButtons.push([Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]);
 
     await cleanAndSend(ctx, detailMsg, Markup.inlineKeyboard(actionButtons));
   });
 
-  // Action: View Official Payment Proof / Receipt (Bukti Pembayaran Berhasil)
   bot.action(/^view_receipt_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const orderId = ctx.match[1];
@@ -1441,70 +1386,28 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const order = await dbService.getOrder(orderId);
 
     if (!order) {
-      return cleanAndSend(ctx, '❌ Order not found.', Markup.inlineKeyboard([
-        [Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders')],
-        [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      return cleanAndSend(ctx, 'Order not found.', Markup.inlineKeyboard([
+        [Markup.button.callback(stripEmojis(getUI('menu_orders', userLang)), 'menu_orders')],
+        [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
       ]));
     }
 
-    const isPaid = order.payment_status === 'PAID' || order.payment_status === 'VERIFIED_BY_ADMIN';
-    const dateFormatted = new Date(order.updated_at || order.created_at || Date.now()).toLocaleString('id-ID', {
-      timeZone: 'Asia/Jakarta',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    let credBlock = '';
-    if (order.account_delivered) {
-      const parsed = parseAccountCredential(order.account_delivered);
-      if (parsed.email && parsed.password) {
-        credBlock = `📧 <b>Email:</b> <code>${parsed.email}</code>\n` +
-                    `🔑 <b>Password:</b> <code>${parsed.password}</code>\n` +
-                    (parsed.cookie ? `🍪 <b>Cookie:</b> <code>${parsed.cookie}</code>\n` : '') +
-                    (parsed.apiKey ? `🔑 <b>API Key:</b> <code>${parsed.apiKey}</code>\n` : '') +
-                    (parsed.note ? `📝 <b>Note:</b> ${parsed.note}\n` : '');
-      } else {
-        credBlock = `<code>${order.account_delivered}</code>`;
+    let delivered = order.account_delivered;
+    if (!delivered) {
+      const stock = await dbService.claimAvailableStock(order.product_id, order.order_id);
+      if (stock && stock.account_data) {
+        delivered = stock.account_data;
+        await dbService.updateOrder(order.order_id, {
+          payment_status: 'PAID',
+          account_delivered: delivered,
+          updated_at: new Date().toISOString()
+        });
       }
-    } else {
-      credBlock = '<i>Account credentials are being processed by the system</i>';
     }
 
-    // Fetch product to get product_url for digital products
-    const rawProduct = await dbService.getProduct(order.product_id);
-    const productUrlLine = rawProduct?.product_url
-      ? `\n🔗 <b>Product Access URL:</b>\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n`
-      : '';
-
-    const receiptText = `🧾 <b>OFFICIAL PAYMENT RECEIPT</b>\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `🆔 <b>Invoice No.:</b> <code>${order.order_id}</code>\n` +
-      `📦 <b>Product:</b> ${order.product_title}${productUrlLine}` +
-      `💰 <b>Total Paid:</b> <code>${order.amount} ${order.currency || 'USD'}</code>\n` +
-      `🌐 <b>Payment Method:</b> ${order.payment_method === 'crypto_auto' ? 'NOWPayments (Auto)' : `Manual Crypto Wallet Transfer (${order.crypto_network || 'Crypto'})`}\n` +
-      `📬 <b>Destination Wallet:</b>\n<code>${order.crypto_address || '-'}</code>\n` +
-      `📝 <b>Transfer Proof / TXID:</b>\n<code>${order.tx_hash || 'Officially Verified'}</code>\n` +
-      `📅 <b>Transaction Time:</b> ${dateFormatted} WIB\n` +
-      `📊 <b>Status:</b> ${isPaid ? '✅ <b>PAID & VERIFIED</b>' : `⏳ <b>${order.payment_status}</b>`}\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `🔑 <b>DELIVERED ACCOUNT CREDENTIALS:</b>\n` +
-      `${credBlock}\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `🔒 <i>This receipt is official proof of a valid transaction. Account credentials are warranty-guaranteed.</i>`;
-
-    const buttons = [
-      [Markup.button.callback('📦 View Order Details', `view_order_${order.order_id}`)],
-      [Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders')],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
-    ];
-
-    await cleanAndSend(ctx, receiptText, Markup.inlineKeyboard(buttons));
+    return await sendFullOrderReceipt(ctx, bot, dbService, order, delivered || 'Credential delivered');
   });
 
-  // Action: Payments & FAQ (Dynamic from Settings)
   bot.action('menu_payments', async (ctx) => {
     await ctx.answerCbQuery();
     const userLang = await getUserLang(ctx);
@@ -1512,12 +1415,11 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const text = getLocalizedPaymentGuide(settings, userLang);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard([
-      [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ]));
   });
 
-  // Action: Terms & Help
   bot.action('menu_help', async (ctx) => {
     await ctx.answerCbQuery();
     const userLang = await getUserLang(ctx);
@@ -1525,12 +1427,11 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const termsText = getLocalizedTerms(settings, userLang);
 
     await cleanAndSend(ctx, termsText, Markup.inlineKeyboard([
-      [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-      [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+      [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+      [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
     ]));
   });
 
-  // Text message listener for TXID submissions & interactive states
   bot.on('text', async (ctx) => {
     const telegramId = String(ctx.from.id);
     const userLang = await getUserLang(ctx);
@@ -1540,7 +1441,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       const session = await dbService.getUserSession(telegramId);
       const state = session?.current_state || '';
 
-      // Coupon redemption: buyer typed a coupon code
       if (state.startsWith('coupon_for_')) {
         const productId = state.replace('coupon_for_', '');
         const coupon = await dbService.getCouponByCode(rawText);
@@ -1573,9 +1473,9 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
         }
 
         if (!evaluation.valid) {
-          return cleanAndSend(ctx, `⚠️ <b>Invalid Coupon</b>\n\n${evaluation.message}`, Markup.inlineKeyboard([
-            [Markup.button.callback('🎟️ Try Another Code', `redeem_coupon_${productId}`)],
-            [Markup.button.callback(getUI('btn_back', userLang), `buy_manual_${productId}`)]
+          return cleanAndSend(ctx, `<b>Invalid Coupon</b>\n\n${evaluation.message}`, Markup.inlineKeyboard([
+            [Markup.button.callback('Try Another Code', `redeem_coupon_${productId}`)],
+            [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), `buy_manual_${productId}`)]
           ]), { state: `coupon_for_${productId}` });
         }
 
@@ -1585,13 +1485,13 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           updated_at: new Date().toISOString()
         });
 
-        return cleanAndSend(ctx, `✅ <b>COUPON SUCCESSFULLY APPLIED</b>\n\n` +
-          `🎟️ Code: <code>${evaluation.code}</code>\n` +
-          `💸 Discount: <b>Rp ${Number(evaluation.discount_amount || 0).toLocaleString('id-ID')}</b>\n` +
-          `💰 Final Total: <b>Rp ${Number(evaluation.final_amount || 0).toLocaleString('id-ID')}</b>\n\n` +
+        return cleanAndSend(ctx, `<b>COUPON SUCCESSFULLY APPLIED</b>\n\n` +
+          `Code: <code>${evaluation.code}</code>\n` +
+          `Discount: <b>Rp ${Number(evaluation.discount_amount || 0).toLocaleString('id-ID')}</b>\n` +
+          `Final Total: <b>Rp ${Number(evaluation.final_amount || 0).toLocaleString('id-ID')}</b>\n\n` +
           `Proceed to select your payment method.`, Markup.inlineKeyboard([
-          [Markup.button.callback('💳 Select Payment Method', `buy_manual_${productId}`)],
-          [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+          [Markup.button.callback('Select Payment Method', `buy_manual_${productId}`)],
+          [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
         ]), { state: 'idle' });
       }
 
@@ -1599,15 +1499,13 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
         const orderId = state.replace('submit_txid_', '');
         const order = await dbService.getOrder(orderId);
 
-        // Guard: a stale session state may reference a cancelled/deleted order.
         if (!order) {
-          return cleanAndSend(ctx, '❌ <b>Order not found.</b> Previous session may have been cancelled or deleted. Please return to main menu.', Markup.inlineKeyboard([
-            [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-            [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+          return cleanAndSend(ctx, '<b>Order not found.</b> Previous session may have been cancelled or deleted. Please return to main menu.', Markup.inlineKeyboard([
+            [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+            [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
           ]), { state: 'main_menu' });
         }
 
-        // Anti-Fraud check: Ensure this hash hasn't already been used in an approved order
         const allOrders = await dbService.getOrders();
         const duplicate = allOrders.find(o =>
           o.order_id !== orderId &&
@@ -1616,10 +1514,10 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
         );
 
         if (duplicate) {
-          const warnMsg = `⚠️ <b>ANTI-FRAUD SYSTEM WARNING</b>\n\nThis transaction hash or proof is already registered on a previous transaction. Please submit your original payment proof.`;
+          const warnMsg = `<b>ANTI-FRAUD SYSTEM WARNING</b>\n\nThis transaction hash or proof is already registered on a previous transaction. Please submit your original payment proof.`;
           return cleanAndSend(ctx, warnMsg, Markup.inlineKeyboard([
-            [Markup.button.callback(getUI('btn_send_txid', userLang), `prompt_txid_${orderId}`)],
-            [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+            [Markup.button.callback(stripEmojis(getUI('btn_send_txid', userLang)), `prompt_txid_${orderId}`)],
+            [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
           ]));
         }
 
@@ -1629,24 +1527,23 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           updated_at: new Date().toISOString()
         });
 
-        // Notify Officer / Admin group via Telegram
         const officerChatId = process.env.TELEGRAM_ADMIN_GROUP_ID || process.env.ADMIN_TELEGRAM_ID;
         if (officerChatId) {
           try {
-            const officerMsg = `🚨 <b>NEW PAYMENT PROOF RECEIVED!</b>\n\n` +
-              `🆔 <b>Order ID:</b> <code>#${orderId}</code>\n` +
-              `👤 <b>Buyer:</b> @${ctx.from.username || 'No Username'} (ID: <code>${telegramId}</code>)\n` +
-              `📦 <b>Product:</b> ${order?.product_title || '-'}\n` +
-              `💰 <b>Amount:</b> Rp ${(order?.total_amount_idr || order?.amount || 0).toLocaleString('id-ID')}\n` +
-              `📝 <b>TXID/Text Proof:</b> <code>${rawText}</code>\n\n` +
+            const officerMsg = `<b>NEW PAYMENT PROOF RECEIVED!</b>\n\n` +
+              `Order ID: <code>#${orderId}</code>\n` +
+              `Buyer: @${ctx.from.username || 'No Username'} (ID: <code>${telegramId}</code>)\n` +
+              `Product: ${order?.product_title || '-'}\n` +
+              `Amount: Rp ${(order?.total_amount_idr || order?.amount || 0).toLocaleString('id-ID')}\n` +
+              `TXID/Text Proof: <code>${rawText}</code>\n\n` +
               `<i>Click verification button below:</i>`;
 
             await bot.telegram.sendMessage(officerChatId, officerMsg, {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
                 [
-                  Markup.button.callback(`✅ Approve #${orderId}`, `adm_appr_${orderId}`),
-                  Markup.button.callback(`❌ Reject #${orderId}`, `adm_rejc_${orderId}`)
+                  Markup.button.callback(`Approve #${orderId}`, `adm_appr_${orderId}`),
+                  Markup.button.callback(`Reject #${orderId}`, `adm_rejc_${orderId}`)
                 ]
               ]).reply_markup
             });
@@ -1655,15 +1552,15 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           }
         }
 
-        const confirmMsg = `✅ <b>PAYMENT PROOF RECEIVED & FORWARDED!</b>\n\n` +
-          `🆔 Order ID: <code>${orderId}</code>\n` +
-          `🔗 TXID/Hash: <code>${rawText}</code>\n\n` +
+        const confirmMsg = `<b>PAYMENT PROOF RECEIVED & FORWARDED!</b>\n\n` +
+          `Order ID: <code>${orderId}</code>\n` +
+          `TXID/Hash: <code>${rawText}</code>\n\n` +
           `Admin staff is verifying your payment. Your account credentials will be sent here immediately upon approval.`;
 
         const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${orderId}`)],
-          [Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders')],
-          [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+          [Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${orderId}`)],
+          [Markup.button.callback(stripEmojis(getUI('menu_orders', userLang)), 'menu_orders')],
+          [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
         ]);
 
         return cleanAndSend(ctx, confirmMsg, keyboard, { state: `order_${orderId}` });
@@ -1673,7 +1570,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     }
   });
 
-  // Photo & Document receipt listener for TXID submissions
   bot.on(['photo', 'document'], async (ctx) => {
     const telegramId = String(ctx.from.id);
     const userLang = await getUserLang(ctx);
@@ -1688,15 +1584,13 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
         const orderId = state.replace('submit_txid_', '');
         const order = await dbService.getOrder(orderId);
 
-        // Guard: a stale session state may reference a cancelled/deleted order.
         if (!order) {
-          return cleanAndSend(ctx, '❌ <b>Order not found.</b> Previous session may have been cancelled or deleted. Please return to main menu.', Markup.inlineKeyboard([
-            [Markup.button.callback(getUI('menu_catalog', userLang), 'menu_catalog')],
-            [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+          return cleanAndSend(ctx, '<b>Order not found.</b> Previous session may have been cancelled or deleted. Please return to main menu.', Markup.inlineKeyboard([
+            [Markup.button.callback(stripEmojis(getUI('menu_catalog', userLang)), 'menu_catalog')],
+            [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
           ]), { state: 'main_menu' });
         }
 
-        // Anti-fraud duplicate check
         if (fileId) {
           const allOrders = await dbService.getOrders();
           const duplicate = allOrders.find(o =>
@@ -1705,10 +1599,10 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
             (o.payment_status === 'APPROVED' || o.payment_status === 'PAID')
           );
           if (duplicate) {
-            const warnMsg = `⚠️ <b>ANTI-FRAUD SYSTEM WARNING</b>\n\nThis payment proof image has been used in a previous transaction. Please upload a valid original receipt.`;
+            const warnMsg = `<b>ANTI-FRAUD SYSTEM WARNING</b>\n\nThis payment proof image has been used in a previous transaction. Please upload a valid original receipt.`;
             return cleanAndSend(ctx, warnMsg, Markup.inlineKeyboard([
-              [Markup.button.callback(getUI('btn_send_txid', userLang), `prompt_txid_${orderId}`)],
-              [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+              [Markup.button.callback(stripEmojis(getUI('btn_send_txid', userLang)), `prompt_txid_${orderId}`)],
+              [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
             ]));
           }
         }
@@ -1731,23 +1625,22 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           updated_at: new Date().toISOString()
         });
 
-        // Forward to Officer / Admin group with one-click approval buttons
         const officerChatId = process.env.TELEGRAM_ADMIN_GROUP_ID || process.env.ADMIN_TELEGRAM_ID;
         if (officerChatId) {
           try {
-            const officerMsg = `🚨 <b>NEW PAYMENT PROOF PHOTO RECEIVED!</b>\n\n` +
-              `🆔 <b>Order ID:</b> <code>#${orderId}</code>\n` +
-              `👤 <b>Buyer:</b> @${ctx.from.username || 'No Username'} (ID: <code>${telegramId}</code>)\n` +
-              `📦 <b>Product:</b> ${order?.product_title || '-'}\n` +
-              `💰 <b>Amount:</b> Rp ${(order?.total_amount_idr || order?.amount || 0).toLocaleString('id-ID')}\n` +
-              `🌐 <b>Method:</b> ${order?.payment_method || 'Manual'}\n` +
-              (caption ? `📝 <b>Buyer Note:</b> <i>${caption}</i>\n` : '') +
+            const officerMsg = `<b>NEW PAYMENT PROOF PHOTO RECEIVED!</b>\n\n` +
+              `Order ID: <code>#${orderId}</code>\n` +
+              `Buyer: @${ctx.from.username || 'No Username'} (ID: <code>${telegramId}</code>)\n` +
+              `Product: ${order?.product_title || '-'}\n` +
+              `Amount: Rp ${(order?.total_amount_idr || order?.amount || 0).toLocaleString('id-ID')}\n` +
+              `Method: ${order?.payment_method || 'Manual'}\n` +
+              (caption ? `Buyer Note: <i>${caption}</i>\n` : '') +
               `\n<i>Select verification action below:</i>`;
 
             const officerKeyboard = Markup.inlineKeyboard([
               [
-                Markup.button.callback(`✅ Approve #${orderId}`, `adm_appr_${orderId}`),
-                Markup.button.callback(`❌ Reject #${orderId}`, `adm_rejc_${orderId}`)
+                Markup.button.callback(`Approve #${orderId}`, `adm_appr_${orderId}`),
+                Markup.button.callback(`Reject #${orderId}`, `adm_rejc_${orderId}`)
               ]
             ]);
 
@@ -1768,16 +1661,16 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           }
         }
 
-        const confirmMsg = `✅ <b>PAYMENT PROOF PHOTO RECEIVED!</b>\n\n` +
-          `🆔 Order ID: <code>${orderId}</code>\n` +
-          `📸 Proof Photo: <b>Saved & forwarded to Admin Staff</b>\n` +
-          (caption ? `📝 Note: <i>${caption}</i>\n\n` : '\n') +
+        const confirmMsg = `<b>PAYMENT PROOF PHOTO RECEIVED!</b>\n\n` +
+          `Order ID: <code>${orderId}</code>\n` +
+          `Proof Photo: <b>Saved & forwarded to Admin Staff</b>\n` +
+          (caption ? `Note: <i>${caption}</i>\n\n` : '\n') +
           `Store admin is reviewing your payment proof. Digital account credentials will be auto-sent here immediately after verification.`;
 
         const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback(getUI('btn_check_payment', userLang), `check_pay_${orderId}`)],
-          [Markup.button.callback(getUI('menu_orders', userLang), 'menu_orders')],
-          [Markup.button.callback(getUI('btn_back', userLang), 'menu_main')]
+          [Markup.button.callback(stripEmojis(getUI('btn_check_payment', userLang)), `check_pay_${orderId}`)],
+          [Markup.button.callback(stripEmojis(getUI('menu_orders', userLang)), 'menu_orders')],
+          [Markup.button.callback(stripEmojis(getUI('btn_back', userLang)), 'menu_main')]
         ]);
 
         return cleanAndSend(ctx, confirmMsg, keyboard, { state: `order_${orderId}` });
@@ -1787,8 +1680,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     }
   });
 
-  // Shared helper: notify the registered admin group/channel about a new order
-  // with one-tap Approve / Reject buttons.
   async function notifyAdminGroupNewOrder(order, proofFileId = null) {
     const groupChatId = process.env.TELEGRAM_ADMIN_GROUP_ID || process.env.TELEGRAM_CHANNEL_ID;
     if (!groupChatId || !order) return;
@@ -1796,23 +1687,23 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const shortId = String(order.order_id).slice(-8);
     const isManual = ['crypto_manual', 'qris', 'ewallet', 'bank', 'bank_transfer', 'manual_idr'].includes(order.payment_method);
     const amountLine = order.currency === 'IDR' || order.total_amount_idr
-      ? `💰 Amount: Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
-      : `💰 Amount: $${order.amount} ${order.currency || 'USD'}`;
+      ? `Amount: Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
+      : `Amount: $${order.amount} ${order.currency || 'USD'}`;
 
-    const msg = `🆕 <b>NEW ORDER RECEIVED!</b>\n\n` +
-      `🆔 Order ID: <code>#${order.order_id}</code>\n` +
-      `👤 Buyer: @${order.username || 'No Username'} (ID: <code>${order.user_id}</code>)\n` +
-      `📦 Product: ${order.product_title}\n` +
+    const msg = `<b>NEW ORDER RECEIVED!</b>\n\n` +
+      `Order ID: <code>#${order.order_id}</code>\n` +
+      `Buyer: @${order.username || 'No Username'} (ID: <code>${order.user_id}</code>)\n` +
+      `Product: ${order.product_title}\n` +
       `${amountLine}\n` +
-      `🌐 Method: <b>${order.payment_method_name || order.payment_method}</b> (${isManual ? 'Manual - needs verification' : 'Auto'})\n` +
-      (order.unique_code ? `🔢 Unique Code: <b>+${order.unique_code}</b>\n` : '') +
-      (order.coupon_code ? `🎟️ Coupon: <code>${order.coupon_code}</code>\n` : '') +
+      `Method: <b>${order.payment_method_name || order.payment_method}</b> (${isManual ? 'Manual - needs verification' : 'Auto'})\n` +
+      (order.unique_code ? `Unique Code: <b>+${order.unique_code}</b>\n` : '') +
+      (order.coupon_code ? `Coupon: <code>${order.coupon_code}</code>\n` : '') +
       `\n<i>${isManual ? 'Awaiting payment proof & admin verification.' : 'Awaiting automatic payment confirmation.'}</i>`;
 
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback(`✅ Approve #${shortId}`, `adm_appr_${order.order_id}`),
-        Markup.button.callback(`❌ Reject #${shortId}`, `adm_rejc_${order.order_id}`)
+        Markup.button.callback(`Approve #${shortId}`, `adm_appr_${order.order_id}`),
+        Markup.button.callback(`Reject #${shortId}`, `adm_rejc_${order.order_id}`)
       ]
     ]);
 
@@ -1831,19 +1722,27 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     }
   }
 
-  // Action: Officer Instant Approval from Telegram Group (STRICT admin auth)
+  // Action: Officer Instant Approval from Telegram Group (STRICT admin auth & auto send receipt)
   bot.action(/^adm_appr_(.+)$/, async (ctx) => {
     const clickerId = String(ctx.from?.id || '');
     if (!await isUserAdmin(clickerId)) {
-      return ctx.answerCbQuery('⛔ Access denied: You are not an official store admin.', { show_alert: true });
+      return ctx.answerCbQuery('Access denied: You are not an official store admin.', { show_alert: true });
     }
     const orderId = ctx.match[1];
     const order = await dbService.getOrder(orderId);
     if (!order) return ctx.answerCbQuery('Order not found.');
 
-    // Atomically claim available stock
     const stock = await dbService.claimAvailableStock(order.product_id, order.order_id);
     const delivered = stock && stock.account_data ? stock.account_data : (order.account_delivered || 'Account approved directly by Officer');
+
+    const updatedOrder = {
+      ...order,
+      payment_status: 'APPROVED',
+      account_delivered: delivered,
+      verified_by: ctx.from.username || ctx.from.first_name,
+      verified_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
 
     await dbService.updateOrder(orderId, {
       payment_status: 'APPROVED',
@@ -1853,62 +1752,25 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       updated_at: new Date().toISOString()
     });
 
-    await ctx.answerCbQuery(`✅ Order #${orderId} approved!`, { show_alert: false });
+    await ctx.answerCbQuery(`Order #${orderId} approved!`, { show_alert: false });
 
-    // Send credentials directly to buyer's chat
-    const buyerLang = order.user_lang || 'en';
-    const parsed = parseAccountCredential(delivered);
-    let credBlock = '';
-    if (parsed.email && parsed.password) {
-      credBlock = `📧 <b>Email:</b> <code>${parsed.email}</code>\n` +
-                  `🔑 <b>Password:</b> <code>${parsed.password}</code>\n` +
-                  (parsed.cookie ? `🍪 <b>Session Cookie:</b> <code>${parsed.cookie}</code>\n` : '') +
-                  (parsed.apiKey ? `🔑 <b>API Key:</b> <code>${parsed.apiKey}</code>\n` : '');
-    } else {
-      credBlock = `<code>${delivered}</code>`;
-    }
+    // Send full receipt and credentials directly to buyer
+    await sendFullOrderReceipt(null, bot, dbService, updatedOrder, delivered);
 
-    // Fetch product to get product_url for digital products
-    const rawProduct = await dbService.getProduct(order.product_id);
-    const productUrlLine = rawProduct?.product_url
-      ? `\n🔗 <b>Product Access URL:</b>\n<a href="${rawProduct.product_url}">${rawProduct.product_url}</a>\n`
-      : '';
-
-    const buyerMsg = `${getUI('payment_success_header', buyerLang)}\n\n` +
-      `📦 <b>Product:</b> ${order.product_title}\n` +
-      `🆔 <b>Order ID:</b> <code>${order.order_id}</code>${productUrlLine}\n` +
-      `${getUI('credentials_label', buyerLang)}\n` +
-      `${credBlock}\n\n` +
-      `${getUI('warranty_tip', buyerLang)}`;
-
-    try {
-      await bot.telegram.sendMessage(order.user_id, buyerMsg, {
-        parse_mode: 'HTML',
-        reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback(getUI('btn_view_receipt', buyerLang), `view_receipt_${order.order_id}`)],
-          [Markup.button.callback(getUI('menu_catalog', buyerLang), 'menu_catalog')]
-        ]).reply_markup
-      });
-    } catch (e) {
-      console.warn('Failed to send approved message to buyer:', e.message);
-    }
-
-    // Update officer group message
     const officerName = `@${ctx.from.username || ctx.from.first_name}`;
     try {
-      await ctx.editMessageCaption(`✅ <b>ORDER #${orderId} HAS BEEN APPROVED</b> by ${officerName}\nProduct: ${order.product_title}\nAccount credentials successfully sent to buyer.`, { parse_mode: 'HTML' });
+      await ctx.editMessageCaption(`<b>ORDER #${orderId} HAS BEEN APPROVED</b> by ${officerName}\nProduct: ${order.product_title}\nAccount credentials and full receipt successfully sent to buyer.`, { parse_mode: 'HTML' });
     } catch (e) {
       try {
-        await ctx.editMessageText(`✅ <b>ORDER #${orderId} HAS BEEN APPROVED</b> by ${officerName}\nProduct: ${order.product_title}\nAccount credentials successfully sent to buyer.`, { parse_mode: 'HTML' });
+        await ctx.editMessageText(`<b>ORDER #${orderId} HAS BEEN APPROVED</b> by ${officerName}\nProduct: ${order.product_title}\nAccount credentials and full receipt successfully sent to buyer.`, { parse_mode: 'HTML' });
       } catch (e2) {}
     }
   });
 
-  // Action: Officer Rejection from Telegram Group (STRICT admin auth)
   bot.action(/^adm_rejc_(.+)$/, async (ctx) => {
     const clickerId = String(ctx.from?.id || '');
     if (!await isUserAdmin(clickerId)) {
-      return ctx.answerCbQuery('⛔ Access denied: You are not an official store admin.', { show_alert: true });
+      return ctx.answerCbQuery('Access denied: You are not an official store admin.', { show_alert: true });
     }
     const orderId = ctx.match[1];
     const order = await dbService.getOrder(orderId);
@@ -1920,30 +1782,29 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       updated_at: new Date().toISOString()
     });
 
-    await ctx.answerCbQuery(`❌ Order #${orderId} rejected.`, { show_alert: false });
+    await ctx.answerCbQuery(`Order #${orderId} rejected.`, { show_alert: false });
 
     const buyerLang = order.user_lang || 'en';
     try {
-      await bot.telegram.sendMessage(order.user_id, `❌ <b>PAYMENT REJECTED: #${order.order_id}</b>\n\nYour payment proof for this order could not be verified by staff. Please contact store admin or make payment with valid proof.`, {
+      await bot.telegram.sendMessage(order.user_id, `<b>PAYMENT REJECTED: #${order.order_id}</b>\n\nYour payment proof for this order could not be verified by staff. Please contact store admin or make payment with valid proof.`, {
         parse_mode: 'HTML',
         reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback(getUI('menu_catalog', buyerLang), 'menu_catalog')],
-          [Markup.button.callback(getUI('btn_back', buyerLang), 'menu_main')]
+          [Markup.button.callback(stripEmojis(getUI('menu_catalog', buyerLang)), 'menu_catalog')],
+          [Markup.button.callback(stripEmojis(getUI('btn_back', buyerLang)), 'menu_main')]
         ]).reply_markup
       });
     } catch (e) {}
 
     const officerName = `@${ctx.from.username || ctx.from.first_name}`;
     try {
-      await ctx.editMessageCaption(`❌ <b>ORDER #${orderId} REJECTED</b> by ${officerName}`, { parse_mode: 'HTML' });
+      await ctx.editMessageCaption(`<b>ORDER #${orderId} REJECTED</b> by ${officerName}`, { parse_mode: 'HTML' });
     } catch (e) {
       try {
-        await ctx.editMessageText(`❌ <b>ORDER #${orderId} REJECTED</b> by ${officerName}`, { parse_mode: 'HTML' });
+        await ctx.editMessageText(`<b>ORDER #${orderId} REJECTED</b> by ${officerName}`, { parse_mode: 'HTML' });
       } catch (e2) {}
     }
   });
 
-  // Action: Back to main menu
   bot.action('menu_main', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -1958,12 +1819,9 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
   // ==========================================
   // TELEGRAM BOT ADMIN CONTROL CENTER
-  // STRICT ID AUTHORIZATION ENFORCED
   // ==========================================
 
-  // Helper to render main admin dashboard
   async function renderAdminDashboard(ctx) {
-    const telegramId = String(ctx.from.id);
     const orders = await dbService.getOrders().catch(() => []);
     const pendingVerif = orders.filter(o =>
       o.payment_status === 'PENDING_VERIFICATION' ||
@@ -1973,52 +1831,47 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const paymentMethods = await dbService.getPaymentMethods().catch(() => []);
     const channels = await dbService.getChannels().catch(() => []);
 
-    const text = `👑 <b>TELEGRAM BOT ADMIN CONTROL CENTER</b>\n\n` +
+    const text = `<b>TELEGRAM BOT ADMIN CONTROL CENTER</b>\n\n` +
       `Hello Admin <b>${ctx.from.first_name || ctx.from.username || 'Officer'}</b> (ID: <code>${ctx.from.id}</code>)\n` +
-      `🟢 <b>Server Engine:</b> Active & Running Normally\n` +
-      `⏳ <b>Awaiting Verification:</b> ${pendingVerif} Transactions\n` +
-      `📦 <b>Product Catalog:</b> ${products.length} Items\n` +
-      `🏦 <b>Payment Methods:</b> ${paymentMethods.length} Methods\n` +
-      `📢 <b>Registered Channels:</b> ${channels.length} Channels\n\n` +
+      `Server Engine: Active & Running Normally\n` +
+      `Awaiting Verification: ${pendingVerif} Transactions\n` +
+      `Product Catalog: ${products.length} Items\n` +
+      `Payment Methods: ${paymentMethods.length} Methods\n` +
+      `Registered Channels: ${channels.length} Channels\n\n` +
       `Please select management menu below:`;
 
     const buttons = [
-      [Markup.button.callback(`💳 Manage Transactions (${pendingVerif} Pending)`, 'admin_orders')],
+      [Markup.button.callback(`Manage Transactions (${pendingVerif} Pending)`, 'admin_orders')],
       [
-        Markup.button.callback('🏦 Payment Methods', 'admin_payments'),
-        Markup.button.callback('📢 Channels', 'admin_channels')
+        Markup.button.callback('Payment Methods', 'admin_payments'),
+        Markup.button.callback('Channels', 'admin_channels')
       ],
       [
-        Markup.button.callback('📊 Financial Summary', 'admin_finances'),
-        Markup.button.callback('🧹 System Cleanup', 'admin_cleanup')
+        Markup.button.callback('Financial Summary', 'admin_finances'),
+        Markup.button.callback('System Cleanup', 'admin_cleanup')
       ],
-      [Markup.button.callback('🔄 Sync Database Tables', 'admin_sync_db')],
+      [Markup.button.callback('Sync Database Tables', 'admin_sync_db')],
       [
-        Markup.button.callback('📢 Mass Broadcast', 'admin_broadcast'),
-        Markup.button.callback('🗄️ Database Backup', 'admin_backup')
+        Markup.button.callback('Mass Broadcast', 'admin_broadcast'),
+        Markup.button.callback('Database Backup', 'admin_backup')
       ],
       [
-        Markup.button.callback('🎟️ Discount Coupons', 'admin_coupons'),
-        Markup.button.callback('📡 Engine Status', 'admin_engine_status')
+        Markup.button.callback('Discount Coupons', 'admin_coupons'),
+        Markup.button.callback('Engine Status', 'admin_engine_status')
       ],
-      [Markup.button.callback('🔙 Back to Store Menu', 'menu_main')]
+      [Markup.button.callback('Back to Store Menu', 'menu_main')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_dashboard' });
   }
 
-  // /admin Command (Strict Authorization)
   bot.command('admin', async (ctx) => {
     const telegramId = String(ctx.from.id);
     const isAdmin = await isUserAdmin(telegramId);
-    if (!isAdmin) {
-      // Regular buyers are completely blocked without disclosing admin panel existence
-      return;
-    }
+    if (!isAdmin) return;
     return renderAdminDashboard(ctx);
   });
 
-  // Action: Open Admin Menu
   bot.action('admin_menu', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -2029,14 +1882,12 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     return renderAdminDashboard(ctx);
   });
 
-  // Action: Admin Orders Management
   bot.action('admin_orders', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
     if (!await isUserAdmin(telegramId)) return;
 
     const orders = await dbService.getOrders().catch(() => []);
-    // Prioritize pending verification, then recent orders
     const pendingOrders = orders
       .filter(o => o.payment_status === 'PENDING_VERIFICATION' || (o.payment_status === 'PENDING' && o.tx_hash))
       .slice(0, 5);
@@ -2045,12 +1896,12 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       .filter(o => o.payment_status !== 'PENDING_VERIFICATION' && !(o.payment_status === 'PENDING' && o.tx_hash))
       .slice(0, 3);
 
-    let text = `💳 <b>MANAGE PURCHASE TRANSACTIONS</b>\n\n`;
+    let text = `<b>MANAGE PURCHASE TRANSACTIONS</b>\n\n`;
 
     if (pendingOrders.length === 0 && otherOrders.length === 0) {
       text += `<i>No transactions in database.</i>\n`;
     } else if (pendingOrders.length > 0) {
-      text += `⏳ <b>Awaiting Proof Verification (${pendingOrders.length}):</b>\n`;
+      text += `<b>Awaiting Proof Verification (${pendingOrders.length}):</b>\n`;
       pendingOrders.forEach((o, i) => {
         const idrFormatted = (o.total_amount_idr || 0).toLocaleString('id-ID');
         text += `\n<b>${i + 1}. Order #${o.order_id}</b>\n` +
@@ -2061,7 +1912,7 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           `• Proof/TXID: <code>${o.tx_hash || '-'}</code>\n`;
       });
     } else {
-      text += `✅ <i>All pending transactions verified! Showing recent orders:</i>\n`;
+      text += `<i>All pending transactions verified! Showing recent orders:</i>\n`;
       otherOrders.forEach((o, i) => {
         text += `\n<b>${i + 1}. #${o.order_id}</b>: ${o.product_title} [${o.payment_status}] (@${o.username || o.user_id})\n`;
       });
@@ -2069,26 +1920,24 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     const buttons = [];
 
-    // Add quick actions for pending orders
     for (const o of pendingOrders) {
       const shortId = o.order_id.slice(-6);
       const row = [];
       const hasPhoto = o.receipt_file_id || (o.tx_hash && (o.tx_hash.includes('AgAC') || o.tx_hash.includes('BAAC')));
       if (hasPhoto) {
-        row.push(Markup.button.callback(`📸 Photo #${shortId}`, `adm_view_proof_${o.order_id}`));
+        row.push(Markup.button.callback(`Photo #${shortId}`, `adm_view_proof_${o.order_id}`));
       }
-      row.push(Markup.button.callback(`✅ Approve #${shortId}`, `adm_appr_${o.order_id}`));
-      row.push(Markup.button.callback(`❌ Reject #${shortId}`, `adm_rejc_${o.order_id}`));
+      row.push(Markup.button.callback(`Approve #${shortId}`, `adm_appr_${o.order_id}`));
+      row.push(Markup.button.callback(`Reject #${shortId}`, `adm_rejc_${o.order_id}`));
       buttons.push(row);
     }
 
-    buttons.push([Markup.button.callback('🔄 Reload Transactions', 'admin_orders')]);
-    buttons.push([Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]);
+    buttons.push([Markup.button.callback('Reload Transactions', 'admin_orders')]);
+    buttons.push([Markup.button.callback('Back to Admin Menu', 'admin_menu')]);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_orders' });
   });
 
-  // Action: View photo proof
   bot.action(/^adm_view_proof_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -2101,18 +1950,18 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const fileId = order.receipt_file_id ||
       (order.tx_hash && order.tx_hash.startsWith('AgAC') ? order.tx_hash : null);
 
-    const caption = `📸 <b>PAYMENT PROOF: #${order.order_id}</b>\n\n` +
-      `👤 Buyer: @${order.username || order.user_id} (ID: <code>${order.user_id}</code>)\n` +
-      `📦 Product: ${order.product_title}\n` +
-      `💰 Amount: Rp ${(order.total_amount_idr || 0).toLocaleString('id-ID')} ($${order.amount} USD)\n` +
-      `📝 Note / TXID: <code>${order.tx_hash || '-'}</code>`;
+    const caption = `<b>PAYMENT PROOF: #${order.order_id}</b>\n\n` +
+      `Buyer: @${order.username || order.user_id} (ID: <code>${order.user_id}</code>)\n` +
+      `Product: ${order.product_title}\n` +
+      `Amount: Rp ${(order.total_amount_idr || 0).toLocaleString('id-ID')} ($${order.amount} USD)\n` +
+      `Note / TXID: <code>${order.tx_hash || '-'}</code>`;
 
     const buttons = Markup.inlineKeyboard([
       [
-        Markup.button.callback('✅ Approve & Send Account', `adm_appr_${order.order_id}`),
-        Markup.button.callback('❌ Reject Payment', `adm_rejc_${order.order_id}`)
+        Markup.button.callback('Approve & Send Account', `adm_appr_${order.order_id}`),
+        Markup.button.callback('Reject Payment', `adm_rejc_${order.order_id}`)
       ],
-      [Markup.button.callback('🔙 Back to Transaction List', 'admin_orders')]
+      [Markup.button.callback('Back to Transaction List', 'admin_orders')]
     ]);
 
     if (fileId) {
@@ -2131,7 +1980,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     await cleanAndSend(ctx, caption, buttons, { state: 'admin_view_proof' });
   });
 
-  // Action: Admin Payment Methods Management
   bot.action('admin_payments', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -2140,7 +1988,7 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const methods = await dbService.getPaymentMethods().catch(() => []);
     const cryptoWallets = await dbService.getCryptoWallets().catch(() => []);
 
-    let text = `🏦 <b>STORE PAYMENT METHODS</b>\n\n` +
+    let text = `<b>STORE PAYMENT METHODS</b>\n\n` +
       `Manage availability of E-Wallet, QRIS, Bank, and Crypto payment methods directly:\n\n`;
 
     if (methods.length === 0 && cryptoWallets.length === 0) {
@@ -2149,36 +1997,31 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     const buttons = [];
 
-    // Manual Methods (QRIS, E-Wallet, Bank)
     methods.forEach((m) => {
-      const statusIcon = m.is_active ? '🟢' : '🔴';
-      text += `${statusIcon} <b>${m.name}</b> (${m.type.toUpperCase()})\n` +
+      text += `<b>${m.name}</b> (${m.type.toUpperCase()})\n` +
         `• Account No.: <code>${m.account_number || '-'}</code> (${m.account_name || 'Admin'})\n` +
         `• Status: ${m.is_active ? 'Active' : 'Disabled'}\n\n`;
 
       buttons.push([
         Markup.button.callback(
-          `${m.is_active ? '🔴 Hide' : '🟢 Activate'} ${m.name.slice(0, 16)}`,
+          `${m.is_active ? 'Hide' : 'Activate'} ${m.name.slice(0, 16)}`,
           `adm_toggle_pm_${m.method_id}`
         )
       ]);
     });
 
-    // Crypto Wallets
     cryptoWallets.forEach((w) => {
-      const statusIcon = w.is_active ? '🟢' : '🔴';
-      text += `${statusIcon} <b>Crypto ${w.network}</b>\n` +
+      text += `<b>Crypto ${w.network}</b>\n` +
         `• Address: <code>${w.address.slice(0, 12)}...${w.address.slice(-6)}</code>\n` +
         `• Status: ${w.is_active ? 'Active' : 'Disabled'}\n\n`;
     });
 
-    buttons.push([Markup.button.callback('🔄 Refresh Methods', 'admin_payments')]);
-    buttons.push([Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]);
+    buttons.push([Markup.button.callback('Refresh Methods', 'admin_payments')]);
+    buttons.push([Markup.button.callback('Back to Admin Menu', 'admin_menu')]);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_payments' });
   });
 
-  // Action: Toggle Payment Method Status
   bot.action(/^adm_toggle_pm_(.+)$/, async (ctx) => {
     const methodId = ctx.match[1];
     const telegramId = String(ctx.from.id);
@@ -2199,28 +2042,25 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       await ctx.answerCbQuery('Failed to toggle status: ' + e.message);
     }
 
-    // Re-render payment methods view
     const updatedMethods = await dbService.getPaymentMethods().catch(() => []);
-    let text = `🏦 <b>STORE PAYMENT METHODS</b>\n\n`;
+    let text = `<b>STORE PAYMENT METHODS</b>\n\n`;
     const buttons = [];
     updatedMethods.forEach((m) => {
-      const statusIcon = m.is_active ? '🟢' : '🔴';
-      text += `${statusIcon} <b>${m.name}</b> (${m.type.toUpperCase()})\n` +
+      text += `<b>${m.name}</b> (${m.type.toUpperCase()})\n` +
         `• Account No.: <code>${m.account_number || '-'}</code> (${m.account_name || 'Admin'})\n` +
         `• Status: ${m.is_active ? 'Active' : 'Disabled'}\n\n`;
 
       buttons.push([
         Markup.button.callback(
-          `${m.is_active ? '🔴 Hide' : '🟢 Activate'} ${m.name.slice(0, 16)}`,
+          `${m.is_active ? 'Hide' : 'Activate'} ${m.name.slice(0, 16)}`,
           `adm_toggle_pm_${m.method_id}`
         )
       ]);
     });
-    buttons.push([Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]);
+    buttons.push([Markup.button.callback('Back to Admin Menu', 'admin_menu')]);
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_payments' });
   });
 
-  // Action: Admin Channels Management
   bot.action('admin_channels', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -2228,7 +2068,7 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     const channels = await dbService.getChannels().catch(() => []);
 
-    let text = `📢 <b>TELEGRAM CHANNELS</b>\n\n` +
+    let text = `<b>TELEGRAM CHANNELS</b>\n\n` +
       `List of official channels & affiliate tracking links:\n\n`;
 
     if (channels.length === 0) {
@@ -2238,27 +2078,25 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     const buttons = [];
 
     channels.forEach((ch) => {
-      const statusIcon = ch.is_active ? '🟢' : '🔴';
-      text += `${statusIcon} <b>${ch.name}</b>\n` +
+      text += `<b>${ch.name}</b>\n` +
           `• Link: ${ch.invite_link || (ch.username ? '@' + ch.username : '-')}\n` +
         `• Link Clicks: ${ch.clicks_count || 0} | Transactions: ${ch.orders_count || ch.conversions_count || 0}\n` +
         `• Status: ${ch.is_active ? 'Shown in Menu' : 'Hidden'}\n\n`;
 
       buttons.push([
         Markup.button.callback(
-          `${ch.is_active ? '🔴 Hide' : '🟢 Show'} ${ch.name.slice(0, 16)}`,
+          `${ch.is_active ? 'Hide' : 'Show'} ${ch.name.slice(0, 16)}`,
           `adm_toggle_ch_${ch.channel_id}`
         )
       ]);
     });
 
-    buttons.push([Markup.button.callback('🔄 Refresh Channels', 'admin_channels')]);
-    buttons.push([Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]);
+    buttons.push([Markup.button.callback('Refresh Channels', 'admin_channels')]);
+    buttons.push([Markup.button.callback('Back to Admin Menu', 'admin_menu')]);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_channels' });
   });
 
-  // Action: Toggle Channel Status
   bot.action(/^adm_toggle_ch_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
     const telegramId = String(ctx.from.id);
@@ -2279,28 +2117,25 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       await ctx.answerCbQuery('Failed to toggle channel: ' + e.message);
     }
 
-    // Refresh
     const updatedChannels = await dbService.getChannels().catch(() => []);
-    let text = `📢 <b>TELEGRAM CHANNELS</b>\n\n`;
+    let text = `<b>TELEGRAM CHANNELS</b>\n\n`;
     const buttons = [];
     updatedChannels.forEach((ch) => {
-      const statusIcon = ch.is_active ? '🟢' : '🔴';
-      text += `${statusIcon} <b>${ch.name}</b>\n` +
+      text += `<b>${ch.name}</b>\n` +
         `• Link: ${ch.invite_link || (ch.username ? '@' + ch.username : '-')}\n` +
         `• Clicks: ${ch.clicks_count || 0} | Transactions: ${ch.orders_count || 0}\n\n`;
 
       buttons.push([
         Markup.button.callback(
-          `${ch.is_active ? '🔴 Hide' : '🟢 Show'} ${ch.name.slice(0, 16)}`,
+          `${ch.is_active ? 'Hide' : 'Show'} ${ch.name.slice(0, 16)}`,
           `adm_toggle_ch_${ch.channel_id}`
         )
       ]);
     });
-    buttons.push([Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]);
+    buttons.push([Markup.button.callback('Back to Admin Menu', 'admin_menu')]);
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_channels' });
   });
 
-  // Action: Admin Finances Recap
   bot.action('admin_finances', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
@@ -2353,51 +2188,49 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       }
     }
 
-    const text = `📊 <b>STORE FINANCIAL SUMMARY</b>\n\n` +
-      `📅 <b>Today (Last 24 Hours):</b>\n` +
+    const text = `<b>STORE FINANCIAL SUMMARY</b>\n\n` +
+      `<b>Today (Last 24 Hours):</b>\n` +
       `• Successful: ${todayCount} orders\n` +
       `• Revenue: Rp ${todayIdr.toLocaleString('id-ID')} ($${todayUsd.toFixed(2)} USD)\n\n` +
-      `🗓️ <b>This Week (7 Days):</b>\n` +
+      `<b>This Week (7 Days):</b>\n` +
       `• Successful: ${weekCount} orders\n` +
       `• Revenue: Rp ${weekIdr.toLocaleString('id-ID')} ($${weekUsd.toFixed(2)} USD)\n\n` +
-      `📆 <b>This Month (30 Days):</b>\n` +
+      `<b>This Month (30 Days):</b>\n` +
       `• Successful: ${monthCount} orders\n` +
       `• Revenue: Rp ${monthIdr.toLocaleString('id-ID')} ($${monthUsd.toFixed(2)} USD)\n\n` +
-      `📈 <b>This Year (365 Days):</b>\n` +
+      `<b>This Year (365 Days):</b>\n` +
       `• Total Successful: ${yearCount} orders\n` +
       `• Total Revenue: Rp ${yearIdr.toLocaleString('id-ID')} ($${yearUsd.toFixed(2)} USD)\n\n` +
       `<i>Calculated purely from valid transactions in database.</i>`;
 
     const buttons = [
-      [Markup.button.callback('🔄 Refresh Financial Summary', 'admin_finances')],
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Refresh Financial Summary', 'admin_finances')],
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_finances' });
   });
 
-  // Action: Admin System Cleanup
   bot.action('admin_cleanup', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
     if (!await isUserAdmin(telegramId)) return;
 
-    const text = `🧹 <b>SYSTEM CLEANUP & DATABASE OPTIMIZATION</b>\n\n` +
+    const text = `<b>SYSTEM CLEANUP & DATABASE OPTIMIZATION</b>\n\n` +
       `This feature keeps server performance fast and database clean:\n\n` +
       `1. <b>Clean System Cache:</b> Clears RAM cache and resets temporary buffers.\n` +
       `2. <b>Delete Cancelled/Expired Orders:</b> Permanently removes all orders with CANCELLED or EXPIRED status.\n\n` +
       `Please select cleanup action below:`;
 
     const buttons = [
-      [Markup.button.callback('🧹 Clean RAM Cache Now', 'adm_clean_cache')],
-      [Markup.button.callback('🗑️ Delete Cancelled / Expired Orders', 'adm_clean_orders')],
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Clean RAM Cache Now', 'adm_clean_cache')],
+      [Markup.button.callback('Delete Cancelled / Expired Orders', 'adm_clean_orders')],
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_cleanup' });
   });
 
-  // Action: Execute Cache Cleanup
   bot.action('adm_clean_cache', async (ctx) => {
     await ctx.answerCbQuery('Cleaning cache...');
     const telegramId = String(ctx.from.id);
@@ -2405,19 +2238,18 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     const res = await cleanSystemCache();
 
-    const text = `✅ <b>SYSTEM CACHE SUCCESSFULLY CLEANED</b>\n\n` +
+    const text = `<b>SYSTEM CACHE SUCCESSFULLY CLEANED</b>\n\n` +
       `• Result: ${res.message}\n` +
       `• Execution Time: ${new Date().toLocaleString('id-ID')}\n\n` +
       `Server is now operating with optimal RAM memory.`;
 
     const buttons = [
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_cleaned' });
   });
 
-  // Action: Execute Cancelled Orders Purge
   bot.action('adm_clean_orders', async (ctx) => {
     await ctx.answerCbQuery('Deleting cancelled orders...');
     const telegramId = String(ctx.from.id);
@@ -2425,20 +2257,19 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     const res = await cleanCancelledOrders(dbService);
 
-    const text = `✅ <b>CANCELLED ORDERS CLEANUP COMPLETE</b>\n\n` +
+    const text = `<b>CANCELLED ORDERS CLEANUP COMPLETE</b>\n\n` +
       `• Orders Deleted: <b>${res.purged_count} orders</b>\n` +
       `• Successful & Pending Orders: <b>Safely Preserved</b>\n` +
       `• Execution Time: ${new Date().toLocaleString('id-ID')}\n\n` +
       `Database storage space has been freed.`;
 
     const buttons = [
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_cleaned' });
   });
 
-  // Action: Auto-Migration Database Tables
   bot.action('admin_sync_db', async (ctx) => {
     await ctx.answerCbQuery('Syncing table schema...');
     const telegramId = String(ctx.from.id);
@@ -2446,8 +2277,8 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
 
     await autoMigrateUniversalDatabase(dbService);
 
-    const text = `🔄 <b>DATABASE TABLE AUTO-MIGRATION SUCCESS</b>\n\n` +
-      `✅ Status: <b>Database Tables Successfully Synced</b>\n` +
+    const text = `<b>DATABASE TABLE AUTO-MIGRATION SUCCESS</b>\n\n` +
+      `Status: <b>Database Tables Successfully Synced</b>\n` +
       `Verified & active tables:\n` +
       `• <code>admins</code>, <code>settings</code>, <code>products</code>, <code>stocks</code>\n` +
       `• <code>orders</code>, <code>crypto_wallets</code>, <code>wallets</code>, <code>bot_tokens</code>\n` +
@@ -2455,20 +2286,19 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       `All new columns & structures synchronized without deleting or corrupting existing data.`;
 
     const buttons = [
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_synced' });
   });
 
-  // Action: Engine Status & Realtime Metrics
   bot.action('admin_engine_status', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
     if (!await isUserAdmin(telegramId)) return;
 
     const m = getBotEngineMetrics();
-    const text = `📡 <b>TELEGRAM BOT ENGINE STATUS</b>\n\n` +
+    const text = `<b>TELEGRAM BOT ENGINE STATUS</b>\n\n` +
       `• Mode: <b>${m.engine_label}</b>\n` +
       `• Server Uptime: <b>${m.uptime_human}</b>\n` +
       `• Latency: <b>${m.latency_ms} ms</b>\n` +
@@ -2478,14 +2308,13 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       `<i>Last update: ${m.last_update_at || '-'}</i>`;
 
     const buttons = [
-      [Markup.button.callback('🔄 Refresh Status', 'admin_engine_status')],
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Refresh Status', 'admin_engine_status')],
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_engine_status' });
   });
 
-  // Action: Manual Database Backup -> delivered as a document to the admin chat
   bot.action('admin_backup', async (ctx) => {
     await ctx.answerCbQuery('Preparing database backup...');
     const telegramId = String(ctx.from.id);
@@ -2499,24 +2328,23 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       await bot.telegram.sendDocument(ctx.chat.id, {
         source: buffer,
         filename: `db_backup_${Date.now()}.json`
-      }, { caption: `🗄️ <b>Store Database Backup</b>\n\nProducts: ${backup.counts.products} | Orders: ${backup.counts.orders} | Users: ${backup.counts.users} | Coupons: ${backup.counts.coupons}`, parse_mode: 'HTML' });
+      }, { caption: `<b>Store Database Backup</b>\n\nProducts: ${backup.counts.products} | Orders: ${backup.counts.orders} | Users: ${backup.counts.users} | Coupons: ${backup.counts.coupons}`, parse_mode: 'HTML' });
 
       await dbService.addSystemLog({ admin_id: telegramId, action: 'manual_db_backup' }).catch(() => {});
     } catch (e) {
-      await cleanAndSend(ctx, `⚠️ <b>Backup creation failed:</b> ${e.message}`, Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      await cleanAndSend(ctx, `<b>Backup creation failed:</b> ${e.message}`, Markup.inlineKeyboard([
+        [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
       ]));
     }
   });
 
-  // Action: Broadcast Engine launcher
   bot.action('admin_broadcast', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
     if (!await isUserAdmin(telegramId)) return;
 
     const status = getBroadcastStatus();
-    const text = `📢 <b>MASS BROADCAST ENGINE</b>\n\n` +
+    const text = `<b>MASS BROADCAST ENGINE</b>\n\n` +
       `Send bulk messages to all bot users with queue (rate-limited).\n\n` +
       `Last Status:\n` +
       `• Running: <b>${status.running ? 'Yes' : 'No'}</b>\n` +
@@ -2525,17 +2353,16 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       `<i>Use Web Admin Panel to compose new broadcast message.</i>`;
 
     const buttons = [
-      [Markup.button.callback('🔄 Refresh Progress', 'admin_broadcast')]
+      [Markup.button.callback('Refresh Progress', 'admin_broadcast')]
     ];
     if (status.running) {
-      buttons.push([Markup.button.callback('⏹️ Stop Broadcast', 'adm_broadcast_stop')]);
+      buttons.push([Markup.button.callback('Stop Broadcast', 'adm_broadcast_stop')]);
     }
-    buttons.push([Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]);
+    buttons.push([Markup.button.callback('Back to Admin Menu', 'admin_menu')]);
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_broadcast' });
   });
 
-  // Action: Stop a running broadcast
   bot.action('adm_broadcast_stop', async (ctx) => {
     const telegramId = String(ctx.from.id);
     if (!await isUserAdmin(telegramId)) return;
@@ -2543,14 +2370,13 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     await ctx.answerCbQuery(res.message, { show_alert: true });
   });
 
-  // Action: Coupons overview
   bot.action('admin_coupons', async (ctx) => {
     await ctx.answerCbQuery();
     const telegramId = String(ctx.from.id);
     if (!await isUserAdmin(telegramId)) return;
 
     const coupons = await dbService.getCoupons().catch(() => []);
-    let text = `🎟️ <b>DISCOUNT COUPONS</b>\n\n`;
+    let text = `<b>DISCOUNT COUPONS</b>\n\n`;
     if (!coupons || coupons.length === 0) {
       text += `<i>No coupons yet. Add via Web Admin Panel.</i>\n`;
     } else {
@@ -2558,28 +2384,25 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
         const pct = Number(c.discount_percentage) || 0;
         const fixed = Number(c.fixed_discount) || 0;
         const disc = pct > 0 ? `${pct}%` : `Rp ${fixed.toLocaleString('id-ID')}`;
-        text += `${c.is_active ? '🟢' : '🔴'} <code>${c.code}</code> - Discount ${disc} | Quota: ${c.used_count || 0}/${c.max_uses || '∞'}\n`;
+        text += `<code>${c.code}</code> - Discount ${disc} | Quota: ${c.used_count || 0}/${c.max_uses || 'Infinity'}\n`;
       });
     }
     text += `\n<i>Manage add/remove coupons via Web Admin Panel.</i>`;
 
     const buttons = [
-      [Markup.button.callback('🔄 Refresh Coupons', 'admin_coupons')],
-      [Markup.button.callback('🔙 Back to Admin Menu', 'admin_menu')]
+      [Markup.button.callback('Refresh Coupons', 'admin_coupons')],
+      [Markup.button.callback('Back to Admin Menu', 'admin_menu')]
     ];
 
     await cleanAndSend(ctx, text, Markup.inlineKeyboard(buttons), { state: 'admin_coupons' });
   });
 
-  // Launch polling safely with auto-reconnect, exponential backoff & heartbeat
   async function startPolling() {
     try {
-      // Step 1: Clear any lingering webhook or pending update lock
       await bot.telegram.deleteWebhook({ drop_pending_updates: true }).catch(wErr => {
         console.warn(`[Bot Engine] Note clearing webhook for "${bot_name}":`, wErr.message);
       });
 
-      // Step 2: Start long polling
       await bot.launch({
         dropPendingUpdates: true
       });
@@ -2592,7 +2415,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
         error_message: null
       }).catch(() => {});
 
-      // Keep-alive heartbeat: periodically verify polling stays registered.
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = setInterval(async () => {
         try {
@@ -2619,13 +2441,11 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
           is_running: false,
           error_message: err.message
         }).catch(() => {});
-        // Auto-reconnect with exponential backoff instead of giving up.
         scheduleReconnect();
       }
     }
   }
 
-  // Exponential backoff reconnect: never kills the Node process, retries forever.
   let reconnectAttempts = 0;
   let reconnectTimer = null;
   let heartbeatTimer = null;
@@ -2668,16 +2488,6 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
   return { bot, start: startPolling, stop: stopPolling };
 }
 
-/**
- * Serverless / Vercel bootstrap:
- * Instead of long polling (which cannot run on serverless), we register a
- * Telegram webhook pointing at this deployment so updates are pushed to the
- * serverless function. This makes the bot work automatically after deploy
- * when the project is imported from GitHub.
- *
- * @param {object} dbService  Universal DB service
- * @param {string} baseUrl    Public deployment URL (e.g. https://app.vercel.app)
- */
 export async function initializeWebhooks(dbService, baseUrl) {
   const webhookBase = (baseUrl || process.env.APP_URL || process.env.VERCEL_URL || '').replace(/\/$/, '');
   if (!webhookBase) {
@@ -2685,7 +2495,6 @@ export async function initializeWebhooks(dbService, baseUrl) {
     return { success: false, message: 'Base URL not available.' };
   }
 
-  // Normalize VERCEL_URL (which lacks a protocol)
   const normalizedBase = webhookBase.startsWith('http') ? webhookBase : `https://${webhookBase}`;
 
   let tokens = [];
@@ -2700,7 +2509,6 @@ export async function initializeWebhooks(dbService, baseUrl) {
     const cleanToken = tokenConfig.bot_token?.trim();
     if (!cleanToken || tokenConfig.is_active === false) continue;
 
-    // Each bot uses a unique webhook path so multiple bots can coexist.
     const webhookPath = `/api/telegram/webhook/${tokenConfig.token_id}`;
     const webhookUrl = `${normalizedBase}${webhookPath}`;
 
@@ -2726,9 +2534,6 @@ export async function initializeWebhooks(dbService, baseUrl) {
   return { success: true, registered: results };
 }
 
-/**
- * Initializes and starts all configured active bot tokens from database
- */
 export async function initializeAllBots(dbService) {
   try {
     const tokens = await dbService.getBotTokens();
@@ -2740,7 +2545,6 @@ export async function initializeAllBots(dbService) {
       const cleanToken = tokenConfig.bot_token?.trim();
       if (!cleanToken) continue;
 
-      // Prevent duplicate instances of the same token in memory
       if (seenTokens.has(cleanToken)) {
         console.warn(`[Bot Engine] Skipping duplicate token ID ${tokenConfig.token_id} for "${tokenConfig.bot_name}".`);
         continue;
@@ -2766,7 +2570,6 @@ export async function launchSingleBot(botConfig, dbService) {
   const { token_id, bot_token } = botConfig;
   stopSingleBot(token_id);
 
-  // Also stop any other bot instance using the same token
   const cleanToken = bot_token?.trim();
   for (const [id, inst] of activeBots.entries()) {
     if (inst.token === cleanToken || id === token_id) {
