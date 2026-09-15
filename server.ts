@@ -104,11 +104,11 @@ async function sendTelegramDeliveryNotice(order: OrderNotification, accountData:
     let credBlock = '';
     if (parsed.email && parsed.password) {
       credBlock = `\n${getUI('credentials_label', lang)}\n` +
-                  `<b>Email:</b> <code>${parsed.email}</code>\n` +
-                  `<b>Password:</b> <code>${parsed.password}</code>\n` +
-                  (parsed.cookie ? `<b>Cookie:</b> <code>${parsed.cookie}</code>\n` : '') +
-                  (parsed.apiKey ? `<b>API Key:</b> <code>${parsed.apiKey}</code>\n` : '') +
-                  (parsed.note ? `<b>Note:</b> ${parsed.note}\n` : '') +
+                  `Email: <code>${parsed.email}</code>\n` +
+                  `Password: <code>${parsed.password}</code>\n` +
+                  (parsed.cookie ? `Cookie: <code>${parsed.cookie}</code>\n` : '') +
+                  (parsed.apiKey ? `API Key: <code>${parsed.apiKey}</code>\n` : '') +
+                  (parsed.note ? `Note: ${parsed.note}\n` : '') +
                   `\n${getUI('warranty_tip', lang)}\n`;
     } else {
       credBlock = `\n${getUI('credentials_label', lang)}\n<code>${accountData}</code>\n\n${getUI('warranty_tip', lang)}\n`;
@@ -116,14 +116,20 @@ async function sendTelegramDeliveryNotice(order: OrderNotification, accountData:
 
     const isIdr = order.currency === 'IDR' || order.total_amount_idr;
     const amountText = isIdr 
-      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('en-US')}`
+      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
       : `$${order.amount} ${order.currency || 'USD'}`;
 
-    const message = `<b>PAYMENT VERIFIED & ACCOUNT DELIVERED!</b>\n\n` +
-      `<b>Product:</b> ${order.product_title}\n` +
-      `<b>Order ID:</b> <code>${order.order_id}</code>\n` +
-      `<b>Total:</b> ${amountText}\n` +
-      (order.product_url ? `\n<b>Product Access:</b> ${order.product_url}\n` : '') +
+    const titleText = getUI('payment_verified_title', lang) || 'PAYMENT VERIFIED AND ACCOUNT DELIVERED!';
+    const prodLabel = getUI('product_label', lang) || 'Product:';
+    const orderIdLabel = getUI('order_id_label', lang) || 'Order ID:';
+    const totalLabel = getUI('total_label', lang) || 'Total:';
+    const accessLabel = getUI('product_access_label', lang) || 'Product Access:';
+
+    const message = `<b>${titleText}</b>\n\n` +
+      `<b>${prodLabel}</b> ${order.product_title}\n` +
+      `<b>${orderIdLabel}</b> <code>${order.order_id}</code>\n` +
+      `<b>${totalLabel}</b> ${amountText}\n` +
+      (order.product_url ? `\n<b>${accessLabel}</b> ${order.product_url}\n` : '') +
       credBlock;
 
     for (const botInstance of (activeBots as any).values()) {
@@ -151,7 +157,7 @@ async function notifyAdminNewOrder(order: any) {
   const isManual = ['crypto_manual', 'qris', 'ewallet', 'bank', 'bank_transfer', 'manual_idr'].includes(order.payment_method);
   const shortId = String(order.order_id).slice(-8);
   const amountLine = order.currency === 'IDR' || order.total_amount_idr
-    ? `Amount: Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('en-US')}`
+    ? `Amount: Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
     : `Amount: $${order.amount} ${order.currency || 'USD'}`;
 
   const msg = `<b>NEW ORDER RECEIVED!</b>\n\n` +
@@ -159,9 +165,9 @@ async function notifyAdminNewOrder(order: any) {
     `Buyer: @${order.username || 'No Username'} (ID: <code>${order.user_id}</code>)\n` +
     `Product: ${order.product_title}\n` +
     `${amountLine}\n` +
-    `Method: <b>${order.payment_method_name || order.payment_method}</b> (${isManual ? 'Manual - needs verification' : 'Automatic'})\n` +
+    `Method: <b>${order.payment_method_name || order.payment_method}</b> (${isManual ? 'Manual - verification required' : 'Automatic'})\n` +
     (order.unique_code ? `Unique Code: <b>+${order.unique_code}</b>\n` : '') +
-    `\n<i>${isManual ? 'Waiting for transfer proof & admin verification.' : 'Waiting for automatic payment confirmation.'}</i>`;
+    `\n<i>${isManual ? 'Awaiting payment proof and admin verification.' : 'Awaiting automatic payment confirmation.'}</i>`;
 
   for (const botInstance of (activeBots as any).values()) {
     try {
@@ -197,15 +203,22 @@ async function sendTelegramCancellationNotice(order: OrderNotification, reason?:
 
     const isIdr = order.currency === 'IDR' || order.total_amount_idr;
     const amountText = isIdr 
-      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('en-US')}`
+      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
       : `$${order.amount} ${order.currency || 'USD'}`;
 
-    const message = `<b>ORDER CANCELLED</b>\n\n` +
-      `<b>Product:</b> ${order.product_title}\n` +
-      `<b>Order ID:</b> <code>${order.order_id}</code>\n` +
-      `<b>Amount:</b> ${amountText}\n` +
-      (reason ? `<b>Reason:</b> ${reason}\n\n` : '\n') +
-      `This order has been cancelled. If you wish to place a new order, please open the product catalog menu.`;
+    const titleText = getUI('order_cancelled_title', lang) || 'ORDER CANCELLED';
+    const prodLabel = getUI('product_label', lang) || 'Product:';
+    const orderIdLabel = getUI('order_id_label', lang) || 'Order ID:';
+    const amountLabel = getUI('amount_label', lang) || 'Amount:';
+    const reasonLabel = getUI('reason_label', lang) || 'Note:';
+    const cancelBody = getUI('order_cancelled_body', lang) || 'This order has been cancelled. If you wish to place a new order, please visit the product catalog.';
+
+    const message = `<b>${titleText}</b>\n\n` +
+      `<b>${prodLabel}</b> ${order.product_title}\n` +
+      `<b>${orderIdLabel}</b> <code>${order.order_id}</code>\n` +
+      `<b>${amountLabel}</b> ${amountText}\n` +
+      (reason ? `<b>${reasonLabel}</b> ${reason}\n\n` : '\n') +
+      cancelBody;
 
     for (const botInstance of (activeBots as any).values()) {
       try {
@@ -245,6 +258,8 @@ app.use((err: any, req: any, res: any, next: any) => {
   }
   next(err);
 });
+
+// API ROUTES
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -293,14 +308,14 @@ app.post('/api/db/backup-telegram', async (req, res) => {
     }
 
     if (!sent) {
-      return res.status(502).json({ success: false, message: 'Failed to send backup to Telegram. Ensure the bot is active.' });
+      return res.status(502).json({ success: false, message: 'Failed to send backup to Telegram. Make sure the bot is active.' });
     }
 
     try {
       await dbService.addSystemLog({ admin_id: 'web_admin', action: 'manual_db_backup_telegram' });
     } catch (e) {}
 
-    res.json({ success: true, message: 'Database backup successfully sent to admin Telegram chat.' });
+    res.json({ success: true, message: 'Database backup successfully sent to Telegram admin chat.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -350,7 +365,7 @@ app.post('/api/db/init-tables', async (req, res) => {
 
     res.json({
       success: tableInitResult.success !== false,
-      message: tableInitResult.message || 'Database tables successfully created and prepared automatically!',
+      message: tableInitResult.message || 'Database tables created and prepared automatically!',
       details: tableInitResult,
       timestamp: new Date().toISOString()
     });
@@ -379,7 +394,7 @@ app.post('/api/db/migrate-supabase', async (req, res) => {
     const result = await migrateAllDataToSupabase(dbService);
     res.json({
       success: true,
-      message: 'Full data migration (products, stocks, orders, settings, wallets, bots) to Supabase successful!',
+      message: 'All data (products, stocks, orders, settings, wallets, bots) successfully migrated to Supabase!',
       data: result,
       timestamp: new Date().toISOString()
     });
@@ -462,19 +477,19 @@ app.get('/api/db/test/:engine', async (req, res) => {
     if (engine === 'local') {
       const localPath = path.join(process.cwd(), 'data', 'local_store.json');
       const exists = fs.existsSync(localPath);
-      return res.json({ success: true, message: `Local JSON Store is active (${exists ? 'Data file exists' : 'Ready to write'}).` });
+      return res.json({ success: true, message: `Local JSON Store active (${exists ? 'Data file exists' : 'Ready to write'}).` });
     }
     if (engine === 'redis') {
       const redisUrl = process.env.REDIS_URL;
       return res.json({
         success: Boolean(redisUrl),
-        message: redisUrl ? 'REDIS_URL is configured in environment.' : 'REDIS_URL is not set (safe fallback to in-memory cache).'
+        message: redisUrl ? 'REDIS_URL configured in environment.' : 'REDIS_URL is empty (fallback to in-memory cache).'
       });
     }
     if (engine === 'mysql') {
       const mysqlUrl = process.env.MYSQL_URL || process.env.MYSQL_DATABASE_URL;
       if (!mysqlUrl) {
-        return res.json({ success: false, message: 'MYSQL_URL is not set (standby mode).' });
+        return res.json({ success: false, message: 'MYSQL_URL is empty (standby mode).' });
       }
       try {
         const mysql: any = await import('mysql2/promise');
@@ -483,13 +498,13 @@ app.get('/api/db/test/:engine', async (req, res) => {
         await conn.end();
         return res.json({ success: true, message: 'MySQL connection successful & active.' });
       } catch (e: any) {
-        return res.json({ success: false, message: 'Failed to connect to MySQL: ' + e.message });
+        return res.json({ success: false, message: 'Failed to connect MySQL: ' + e.message });
       }
     }
     if (engine === 'mongodb') {
       const mongoUri = process.env.MONGODB_URI;
       if (!mongoUri) {
-        return res.json({ success: false, message: 'MONGODB_URI is not set (standby mode).' });
+        return res.json({ success: false, message: 'MONGODB_URI is empty (standby mode).' });
       }
       try {
         const mongodb: any = await import('mongodb');
@@ -499,7 +514,7 @@ app.get('/api/db/test/:engine', async (req, res) => {
         await client.close();
         return res.json({ success: true, message: 'MongoDB connection successful & active.' });
       } catch (e: any) {
-        return res.json({ success: false, message: 'Failed to connect to MongoDB: ' + e.message });
+        return res.json({ success: false, message: 'Failed to connect MongoDB: ' + e.message });
       }
     }
     return res.status(400).json({ success: false, message: 'Unknown database engine.' });
@@ -562,7 +577,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     return res.status(401).json({
       success: false,
-      message: 'The username or password you entered is incorrect.'
+      message: 'Invalid username or password.'
     });
   } catch (err: any) {
     try {
@@ -580,7 +595,7 @@ app.post('/api/auth/login', async (req, res) => {
         });
       }
     } catch (innerErr) {}
-    res.status(200).json({ success: false, message: 'Login failed to process. Please try again.' });
+    res.status(200).json({ success: false, message: 'Failed to process login. Please try again.' });
   }
 });
 
@@ -607,7 +622,7 @@ app.post('/api/auth/change-password', async (req, res) => {
   try {
     const { username, new_password, current_password, new_username } = req.body || {};
     if (!new_password || String(new_password).trim().length < 4) {
-      return res.status(400).json({ success: false, message: 'New password must be at least 4 characters.' });
+      return res.status(400).json({ success: false, message: 'New password must be at least 4 characters long.' });
     }
 
     const verified = verifyEnvAdminLogin(username || 'admin', current_password);
@@ -648,7 +663,7 @@ app.put('/api/auth/update-admin', async (req, res) => {
   try {
     const { username, new_username, new_password, current_password } = req.body || {};
     if (!username) {
-      return res.status(400).json({ success: false, message: 'Admin username to be changed is required' });
+      return res.status(400).json({ success: false, message: 'Target admin username is required.' });
     }
 
     const verified = verifyEnvAdminLogin(username, current_password);
@@ -665,7 +680,7 @@ app.put('/api/auth/update-admin', async (req, res) => {
 
     const isRoot = verified.username === 'root@admin.com' || verified.username === 'admin';
     if (!isRoot && username !== verified.username) {
-      return res.status(403).json({ success: false, message: 'Only root admin can change other admins' });
+      return res.status(403).json({ success: false, message: 'Only root admin can update other admins.' });
     }
 
     const targetUsername = new_username || username;
@@ -692,7 +707,7 @@ app.put('/api/auth/update-admin', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Admin successfully updated'
+      message: 'Admin updated successfully.'
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -971,7 +986,7 @@ app.delete('/api/stocks/:id', async (req, res) => {
 function extractFileIdFromOrder(order: any): string | null {
   if (!order) return null;
   if (order.receipt_file_id) return order.receipt_file_id;
-  const match = (order.tx_hash || '').match(/(?:\[(?:Bukti Gambar ID|Photo):\s*([a-zA-Z0-9_\-]+)\])/i);
+  const match = (order.tx_hash || '').match(/(?:\[(?:Receipt Image ID|Photo):\s*([a-zA-Z0-9_\-]+)\])/i);
   if (match) return match[1];
   if (order.tx_hash && (order.tx_hash.startsWith('AgAC') || order.tx_hash.startsWith('BAAC'))) {
     return order.tx_hash.trim();
@@ -1016,7 +1031,7 @@ async function streamRemoteFile(
 ) {
   const {
     defaultContentType = 'image/jpeg',
-    notFoundMessage = 'No image proof for this order.',
+    notFoundMessage = 'File not found',
     downloadErrorMessage = 'Failed to download file.'
   } = options;
 
@@ -1036,7 +1051,7 @@ async function streamRemoteFile(
   return res.send(buffer);
 }
 
-function evaluateCoupon(coupon: any, baseAmount: number): {
+function evaluateCoupon(coupon: any, baseAmount: number, lang: string = 'en'): {
   success: boolean;
   valid: boolean;
   message: string;
@@ -1045,15 +1060,15 @@ function evaluateCoupon(coupon: any, baseAmount: number): {
   final_amount?: number;
 } {
   if (!coupon) {
-    return { success: true, valid: false, message: 'Coupon code not found or invalid.' };
+    return { success: true, valid: false, message: getUI('coupon_not_found', lang) || 'Coupon code not found or invalid.' };
   }
   if (coupon.is_active === false) {
-    return { success: true, valid: false, message: 'This coupon code is currently inactive.' };
+    return { success: true, valid: false, message: getUI('coupon_inactive', lang) || 'This coupon code is inactive.' };
   }
   const maxUses = Number(coupon.max_uses) || 0;
   const usedCount = Number(coupon.used_count) || 0;
   if (maxUses > 0 && usedCount >= maxUses) {
-    return { success: true, valid: false, message: 'Coupon code has reached its usage limit.' };
+    return { success: true, valid: false, message: getUI('coupon_limit_reached', lang) || 'Coupon code has reached its usage limit.' };
   }
 
   const pct = Number(coupon.discount_percentage) || 0;
@@ -1061,13 +1076,15 @@ function evaluateCoupon(coupon: any, baseAmount: number): {
   const discountAmount = Math.round((baseAmount * pct) / 100 + fixed);
   const finalAmount = Math.max(0, baseAmount - discountAmount);
 
+  const appliedMsg = getUI('coupon_applied', lang) || `Coupon ${coupon.code} applied successfully! Discount: Rp ${discountAmount.toLocaleString('id-ID')}.`;
+
   return {
     success: true,
     valid: true,
     code: coupon.code,
     discount_amount: discountAmount,
     final_amount: finalAmount,
-    message: `Coupon ${coupon.code} successfully applied! Discount Rp ${discountAmount.toLocaleString('en-US')}.`
+    message: appliedMsg
   };
 }
 
@@ -1118,10 +1135,11 @@ async function createOrderFromProduct(params: {
       }
     }
     if (!wallet) {
-      return { kind: 'error', ok: false, status: 400, message: 'No manual crypto wallet configured by admin yet.' };
+      return { kind: 'error', ok: false, status: 400, message: 'No manual crypto wallet configured by admin.' };
     }
 
     const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
+
     const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
     const qrUrl = wallet.qr_url || getQrCodeUrl(wallet.address, 300);
@@ -1170,6 +1188,7 @@ async function createOrderFromProduct(params: {
     }
 
     const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
+
     const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
     const orderDoc = {
@@ -1214,10 +1233,11 @@ async function createOrderFromProduct(params: {
   }
 
   if (typeof (cryptoGateway as any).isConfigured === 'function' && !(cryptoGateway as any).isConfigured()) {
-    return { kind: 'error', ok: false, status: 503, message: 'Automatic crypto payment is not active (gateway not connected). Please use Manual Payment method.' };
+    return { kind: 'error', ok: false, status: 503, message: 'Automatic crypto payment is disabled (gateway not connected). Please use Manual Payment.' };
   }
 
   const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
+
   const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
   const payRes = await cryptoGateway.createPayment({
@@ -1265,9 +1285,9 @@ function enrichOrderReceipt(order: any) {
   if (!order) return order;
   const fileId = extractFileIdFromOrder(order);
   let cleanTxHash = order.tx_hash || '';
-  if (cleanTxHash.includes('[Bukti Gambar ID:') || cleanTxHash.includes('[Photo:')) {
-    cleanTxHash = cleanTxHash.replace(/\[(?:Bukti Gambar ID|Photo):\s*[a-zA-Z0-9_\-]+\]/g, 'Transfer Proof Photo').trim();
-    if (!cleanTxHash) cleanTxHash = 'Transfer Proof Photo';
+  if (cleanTxHash.includes('[Receipt Image ID:') || cleanTxHash.includes('[Photo:') || cleanTxHash.includes('[Bukti Gambar ID:')) {
+    cleanTxHash = cleanTxHash.replace(/\[(?:Receipt Image ID|Bukti Gambar ID|Photo):\s*[a-zA-Z0-9_\-]+\]/g, 'Payment Proof Photo').trim();
+    if (!cleanTxHash) cleanTxHash = 'Payment Proof Photo';
   }
   const lang = order.user_lang || 'en';
   return {
@@ -1333,22 +1353,22 @@ app.get('/api/orders/:id/receipt-image', async (req, res) => {
 
     if (!fileId && order.receipt_image_url && order.receipt_image_url.startsWith('http')) {
       return streamRemoteFile(order.receipt_image_url, res, {
-        notFoundMessage: 'No image proof for this order.',
-        downloadErrorMessage: 'Failed to download proof image from external source.'
+        notFoundMessage: 'No receipt image found for this order.',
+        downloadErrorMessage: 'Failed to download receipt image from external source.'
       });
     }
 
     if (!fileId) {
-      return res.status(404).send('No image proof for this order.');
+      return res.status(404).send('No receipt image found for this order.');
     }
 
     const fileUrl = await getTelegramFileDirectUrl(fileId);
     if (!fileUrl) {
-      return res.status(404).send('Failed to fetch image file from Telegram server. Ensure bot is active.');
+      return res.status(404).send('Failed to fetch image file from Telegram server. Make sure the bot is active.');
     }
 
     return streamRemoteFile(fileUrl, res, {
-      notFoundMessage: 'No image proof for this order.',
+      notFoundMessage: 'No receipt image found for this order.',
       downloadErrorMessage: 'Failed to download image from Telegram.'
     });
   } catch (err: any) {
@@ -1362,10 +1382,10 @@ app.get('/api/telegram-file/:fileId', async (req, res) => {
     const { fileId } = req.params;
     const fileUrl = await getTelegramFileDirectUrl(fileId);
     if (!fileUrl) {
-      return res.status(404).send('File not found on Telegram');
+      return res.status(404).send('File not found in Telegram');
     }
     return streamRemoteFile(fileUrl, res, {
-      notFoundMessage: 'File not found on Telegram',
+      notFoundMessage: 'File not found in Telegram',
       downloadErrorMessage: 'Failed to download file from Telegram'
     });
   } catch (err: any) {
@@ -1421,7 +1441,7 @@ app.post('/api/orders/:id/approve', async (req, res) => {
         if (stock && stock.account_data) {
           deliveredAccount = stock.account_data;
         } else {
-          deliveredAccount = 'Physical account not available in stock. Admin can attach account manually.';
+          deliveredAccount = 'Account not available in stock. Admin will attach account manually.';
         }
       } catch (stockErr: any) {
         console.warn('Stock claim fallback:', stockErr.message);
@@ -1526,7 +1546,7 @@ app.post('/api/orders/:id/reset', async (req, res) => {
       order_id: orderId, 
       order: resetOrder, 
       status: 'PENDING',
-      message: 'Order successfully reset to Pending status.' 
+      message: 'Order status successfully reset to Pending.' 
     });
   } catch (err: any) {
     console.error('Reset order error:', err);
@@ -1817,9 +1837,9 @@ app.delete('/api/coupons/:id', async (req, res) => {
 
 app.post('/api/coupons/validate', async (req, res) => {
   try {
-    const { code, amount_idr } = req.body || {};
+    const { code, amount_idr, user_lang } = req.body || {};
     const coupon = await dbService.getCouponByCode(code);
-    const result = evaluateCoupon(coupon, Number(amount_idr) || 0);
+    const result = evaluateCoupon(coupon, Number(amount_idr) || 0, user_lang || 'en');
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -2135,16 +2155,16 @@ app.put('/api/super-admins/:id', async (req, res) => {
     if (!admin) {
       return res.status(404).json({ success: false, message: 'Super admin not found' });
     }
-    
+
     const currentUser = req.body.current_user || req.headers['x-current-user'];
     const isRootUser = currentUser === 'root@admin.com' || currentUser === 'root_admin';
     
     if (admin.is_root && !isRootUser) {
-      return res.status(403).json({ success: false, message: 'Only root admin can change root admin' });
+      return res.status(403).json({ success: false, message: 'Only root admin can edit root admin accounts.' });
     }
     
     if (!isRootUser && currentUser !== admin.username && currentUser !== admin.admin_id) {
-      return res.status(403).json({ success: false, message: 'Not allowed to change other admins' });
+      return res.status(403).json({ success: false, message: 'Not allowed to modify other admins.' });
     }
 
     const updateData = {
@@ -2336,7 +2356,7 @@ app.get('/api/export/:dataset', async (req, res) => {
 
     if (format === 'csv') {
       if (dataset === 'all') {
-        return res.status(400).json({ success: false, message: 'Combined backup (All) is only supported in JSON format.' });
+        return res.status(400).json({ success: false, message: 'Combined backup (All) is supported in JSON format only.' });
       }
 
       const rows = Array.isArray(data) ? data : [];
@@ -2481,10 +2501,9 @@ app.post('/api/translate/auto', async (req, res) => {
       try {
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const prompt = `You are a professional multi-lingual translator for a digital store bot.
-Translate the following store text into these 10 languages:
-id (Indonesian), ms (Malay), zh (Chinese Simplified), ru (Russian), it (Italian), es (Spanish), hi (Hindi), uz (Uzbek), ar (Arabic), en (English).
-Preserve all formatting tags (<b>, <i>, <code>, <pre>), and punctuation.
-Respond with ONLY a valid JSON object whose keys are the language codes (id, ms, zh, ru, it, es, hi, uz, ar, en) and values are the translated strings.
+Translate the following store text into all supported languages dynamically.
+Preserve formatting tags (<b>, <i>, <code>, <pre>) and punctuation. Remove any emojis.
+Respond with ONLY a valid JSON object whose keys are the language codes (en, id, ms, zh, ru, it, es, hi, uz, ar) and values are the translated strings.
 
 Original text:
 ${text}`;
@@ -2541,12 +2560,13 @@ app.post('/api/translate/batch-products', async (req, res) => {
 
       if (ai) {
         try {
-          const prompt = `Translate this product title and description into 10 languages: id, ms, zh, ru, it, es, hi, uz, ar, en.
+          const prompt = `Translate this product title and description into 10 languages: en, id, ms, zh, ru, it, es, hi, uz, ar. Do not include emojis.
 Title: ${prod.title}
 Description: ${prod.description}
 
 Respond ONLY with valid JSON in this exact structure:
 {
+  "en": { "title": "...", "description": "..." },
   "id": { "title": "...", "description": "..." },
   "ms": { "title": "...", "description": "..." },
   "zh": { "title": "...", "description": "..." },
@@ -2555,8 +2575,7 @@ Respond ONLY with valid JSON in this exact structure:
   "es": { "title": "...", "description": "..." },
   "hi": { "title": "...", "description": "..." },
   "uz": { "title": "...", "description": "..." },
-  "ar": { "title": "...", "description": "..." },
-  "en": { "title": "...", "description": "..." }
+  "ar": { "title": "...", "description": "..." }
 }`;
           const response = await ai.models.generateContent({
             model: 'gemini-3.8-flash',
@@ -2595,10 +2614,10 @@ Respond ONLY with valid JSON in this exact structure:
 app.post('/api/settings/auto-translate-all', async (req, res) => {
   try {
     const settings = await dbService.getSettings() || {};
-    const welcome = settings.welcome_text || DEFAULT_WELCOME_TEXTS['en'];
-    const terms = settings.terms_text || DEFAULT_TERMS_TEXTS['en'];
-    const paymentGuide = settings.payment_guide_text || DEFAULT_PAYMENT_GUIDES['en'];
-    const orderGuide = settings.order_guide_text || DEFAULT_ORDER_GUIDES['en'];
+    const welcome = settings.welcome_text || DEFAULT_WELCOME_TEXTS['en'] || DEFAULT_WELCOME_TEXTS['id'];
+    const terms = settings.terms_text || DEFAULT_TERMS_TEXTS['en'] || DEFAULT_TERMS_TEXTS['id'];
+    const paymentGuide = settings.payment_guide_text || DEFAULT_PAYMENT_GUIDES['en'] || DEFAULT_PAYMENT_GUIDES['id'];
+    const orderGuide = settings.order_guide_text || DEFAULT_ORDER_GUIDES['en'] || DEFAULT_ORDER_GUIDES['id'];
 
     let welcomeTranslations = settings.welcome_translations || {};
     let termsTranslations = settings.terms_translations || {};
@@ -2608,8 +2627,8 @@ app.post('/api/settings/auto-translate-all', async (req, res) => {
     if (process.env.GEMINI_API_KEY) {
       try {
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const prompt = `Translate all 4 digital store texts into 10 languages: id, ms, zh, ru, it, es, hi, uz, ar, en.
-Keep formatting tags (<b>, <i>, <code>, <pre>), and newlines intact.
+        const prompt = `Translate all 4 digital store texts into 10 languages: en, id, ms, zh, ru, it, es, hi, uz, ar.
+Keep formatting tags (<b>, <i>, <code>, <pre>) and newlines intact. Remove all emojis.
 
 Welcome text:
 ${welcome}
@@ -2626,16 +2645,16 @@ ${orderGuide}
 Respond ONLY with valid JSON in this exact structure:
 {
   "welcome": {
-    "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "...", "en": "..."
+    "en": "...", "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "..."
   },
   "terms": {
-    "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "...", "en": "..."
+    "en": "...", "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "..."
   },
   "payment_guide": {
-    "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "...", "en": "..."
+    "en": "...", "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "..."
   },
   "order_guide": {
-    "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "...", "en": "..."
+    "en": "...", "id": "...", "ms": "...", "zh": "...", "ru": "...", "it": "...", "es": "...", "hi": "...", "uz": "...", "ar": "..."
   }
 }`;
         const response = await ai.models.generateContent({
@@ -2663,7 +2682,7 @@ Respond ONLY with valid JSON in this exact structure:
       order_guide_translations: orderGuideTranslations
     });
 
-    res.json({ success: true, message: 'Successfully translated all store texts to 10 languages!' });
+    res.json({ success: true, message: 'Successfully translated all store texts to supported languages.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2708,6 +2727,8 @@ app.post('/api/broadcast/stop', (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+// ENVIRONMENT VARIABLES MANAGEMENT API
 
 app.get('/api/env', async (req, res) => {
   try {
@@ -2764,8 +2785,8 @@ app.put('/api/env', async (req, res) => {
     if (!variables || typeof variables !== 'object') {
       return res.status(400).json({ success: false, message: 'Variables object is required' });
     }
-    const errors = [];
-    const validVars = {};
+    const errors: string[] = [];
+    const validVars: Record<string, any> = {};
     Object.entries(variables).forEach(([key, value]) => {
       if (!validateEnvKey(key)) {
         errors.push(`Invalid key format: ${key}`);
@@ -2880,7 +2901,7 @@ app.post('/api/webhooks/nowpayments', async (req, res) => {
             if (stock && stock.account_data) {
               deliveredAccount = stock.account_data;
             } else {
-              deliveredAccount = 'Physical account not available in stock. Admin will send it shortly.';
+              deliveredAccount = 'Account not available in stock. Admin will send it shortly.';
             }
           } catch (e: any) {
             deliveredAccount = 'Account ready to be sent manually by admin.';
