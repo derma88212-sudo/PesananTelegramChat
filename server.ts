@@ -69,7 +69,6 @@ dotenv.config();
 const app = express();
 app.use(cors({
   origin: (origin, callback) => {
-    // Membolehkan request tanpa origin (seperti mobile app, curl, Postman) atau semua origin
     callback(null, true);
   },
   credentials: true,
@@ -78,7 +77,6 @@ app.use(cors({
 }));
 const PORT = Number(process.env.PORT) || 3000;
 
-// Minimal shape of the order fields the Telegram notification helpers rely on.
 interface OrderNotification {
   order_id: string;
   user_id: string;
@@ -89,30 +87,28 @@ interface OrderNotification {
   [key: string]: any;
 }
 
-// Helper: Dispatch delivery notification directly to buyer's Telegram chat if bot is active
 async function sendTelegramDeliveryNotice(order: OrderNotification, accountData: string) {
   if (!order || !order.user_id) return;
   const telegramId = String(order.user_id);
 
   try {
-    // Check if notifications are enabled
     const settings = await dbService.getSettings() || {};
     if (!settings.notify_on_paid && !settings.notify_on_txid) {
       return;
     }
 
     const session = await dbService.getUserSession(telegramId);
-    const lang = session?.language || order.user_lang || 'id';
+    const lang = session?.language || order.user_lang || 'en';
     const parsed = parseAccountCredential(accountData);
 
     let credBlock = '';
     if (parsed.email && parsed.password) {
       credBlock = `\n${getUI('credentials_label', lang)}\n` +
-                  `📧 <b>Email:</b> <code>${parsed.email}</code>\n` +
-                  `🔑 <b>Password:</b> <code>${parsed.password}</code>\n` +
-                  (parsed.cookie ? `🍪 <b>Cookie:</b> <code>${parsed.cookie}</code>\n` : '') +
-                  (parsed.apiKey ? `🔑 <b>API Key:</b> <code>${parsed.apiKey}</code>\n` : '') +
-                  (parsed.note ? `📝 <b>Catatan:</b> ${parsed.note}\n` : '') +
+                  `<b>Email:</b> <code>${parsed.email}</code>\n` +
+                  `<b>Password:</b> <code>${parsed.password}</code>\n` +
+                  (parsed.cookie ? `<b>Cookie:</b> <code>${parsed.cookie}</code>\n` : '') +
+                  (parsed.apiKey ? `<b>API Key:</b> <code>${parsed.apiKey}</code>\n` : '') +
+                  (parsed.note ? `<b>Note:</b> ${parsed.note}\n` : '') +
                   `\n${getUI('warranty_tip', lang)}\n`;
     } else {
       credBlock = `\n${getUI('credentials_label', lang)}\n<code>${accountData}</code>\n\n${getUI('warranty_tip', lang)}\n`;
@@ -120,14 +116,14 @@ async function sendTelegramDeliveryNotice(order: OrderNotification, accountData:
 
     const isIdr = order.currency === 'IDR' || order.total_amount_idr;
     const amountText = isIdr 
-      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
+      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('en-US')}`
       : `$${order.amount} ${order.currency || 'USD'}`;
 
-    const message = `🎉 <b>PEMBAYARAN DIVERIFIKASI & AKUN TERKIRIM!</b>\n\n` +
-      `📦 <b>Produk:</b> ${order.product_title}\n` +
-      `🆔 <b>Order ID:</b> <code>${order.order_id}</code>\n` +
-      `💰 <b>Total:</b> ${amountText}\n` +
-      (order.product_url ? `\n🔗 <b>Akses Produk:</b> ${order.product_url}\n` : '') +
+    const message = `<b>PAYMENT VERIFIED & ACCOUNT DELIVERED!</b>\n\n` +
+      `<b>Product:</b> ${order.product_title}\n` +
+      `<b>Order ID:</b> <code>${order.order_id}</code>\n` +
+      `<b>Total:</b> ${amountText}\n` +
+      (order.product_url ? `\n<b>Product Access:</b> ${order.product_url}\n` : '') +
       credBlock;
 
     for (const botInstance of (activeBots as any).values()) {
@@ -137,7 +133,7 @@ async function sendTelegramDeliveryNotice(order: OrderNotification, accountData:
           disable_web_page_preview: true
         });
         console.log(`[Telegram Delivery] Sent account to buyer ${telegramId} via bot.`);
-        break; // Successfully delivered by active bot
+        break;
       } catch (err: any) {
         console.warn(`[Telegram Delivery] Bot dispatch note:`, err.message);
       }
@@ -147,8 +143,6 @@ async function sendTelegramDeliveryNotice(order: OrderNotification, accountData:
   }
 }
 
-// Notify the registered Telegram admin group/channel about a brand-new order,
-// including one-tap Approve/Reject buttons for manual payments.
 async function notifyAdminNewOrder(order: any) {
   if (!order) return;
   const groupChatId = process.env.TELEGRAM_ADMIN_GROUP_ID || process.env.TELEGRAM_CHANNEL_ID || process.env.ADMIN_TELEGRAM_ID;
@@ -157,17 +151,17 @@ async function notifyAdminNewOrder(order: any) {
   const isManual = ['crypto_manual', 'qris', 'ewallet', 'bank', 'bank_transfer', 'manual_idr'].includes(order.payment_method);
   const shortId = String(order.order_id).slice(-8);
   const amountLine = order.currency === 'IDR' || order.total_amount_idr
-    ? `💰 Nominal: Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
-    : `💰 Nominal: $${order.amount} ${order.currency || 'USD'}`;
+    ? `Amount: Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('en-US')}`
+    : `Amount: $${order.amount} ${order.currency || 'USD'}`;
 
-  const msg = `🆕 <b>PESAN BARU MASUK!</b>\n\n` +
-    `🆔 Order ID: <code>#${order.order_id}</code>\n` +
-    `👤 Pembeli: @${order.username || 'Tanpa Username'} (ID: <code>${order.user_id}</code>)\n` +
-    `📦 Produk: ${order.product_title}\n` +
+  const msg = `<b>NEW ORDER RECEIVED!</b>\n\n` +
+    `Order ID: <code>#${order.order_id}</code>\n` +
+    `Buyer: @${order.username || 'No Username'} (ID: <code>${order.user_id}</code>)\n` +
+    `Product: ${order.product_title}\n` +
     `${amountLine}\n` +
-    `🌐 Metode: <b>${order.payment_method_name || order.payment_method}</b> (${isManual ? 'Manual - perlu verifikasi' : 'Otomatis'})\n` +
-    (order.unique_code ? `🔢 Kode Unik: <b>+${order.unique_code}</b>\n` : '') +
-    `\n<i>${isManual ? 'Menunggu bukti transfer & verifikasi admin.' : 'Menunggu konfirmasi pembayaran otomatis.'}</i>`;
+    `Method: <b>${order.payment_method_name || order.payment_method}</b> (${isManual ? 'Manual - needs verification' : 'Automatic'})\n` +
+    (order.unique_code ? `Unique Code: <b>+${order.unique_code}</b>\n` : '') +
+    `\n<i>${isManual ? 'Waiting for transfer proof & admin verification.' : 'Waiting for automatic payment confirmation.'}</i>`;
 
   for (const botInstance of (activeBots as any).values()) {
     try {
@@ -176,8 +170,8 @@ async function notifyAdminNewOrder(order: any) {
         disable_web_page_preview: true,
         reply_markup: {
           inline_keyboard: [[
-            { text: `✅ Setujui #${shortId}`, callback_data: `adm_appr_${order.order_id}` },
-            { text: `❌ Tolak #${shortId}`, callback_data: `adm_rejc_${order.order_id}` }
+            { text: `Approve #${shortId}`, callback_data: `adm_appr_${order.order_id}` },
+            { text: `Reject #${shortId}`, callback_data: `adm_rejc_${order.order_id}` }
           ]]
         }
       });
@@ -193,26 +187,25 @@ async function sendTelegramCancellationNotice(order: OrderNotification, reason?:
   const telegramId = String(order.user_id);
 
   try {
-    // Check if notifications are enabled
     const settings = await dbService.getSettings() || {};
     if (!settings.notify_on_new_order) {
       return;
     }
 
     const session = await dbService.getUserSession(telegramId);
-    const lang = session?.language || order.user_lang || 'id';
+    const lang = session?.language || order.user_lang || 'en';
 
     const isIdr = order.currency === 'IDR' || order.total_amount_idr;
     const amountText = isIdr 
-      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('id-ID')}`
+      ? `Rp ${Number(order.total_amount_idr || order.amount || 0).toLocaleString('en-US')}`
       : `$${order.amount} ${order.currency || 'USD'}`;
 
-    const message = `❌ <b>PESANAN DIBATALKAN / CANCELLED</b>\n\n` +
-      `📦 <b>Produk:</b> ${order.product_title}\n` +
-      `🆔 <b>Order ID:</b> <code>${order.order_id}</code>\n` +
-      `💰 <b>Nominal:</b> ${amountText}\n` +
-      (reason ? `📝 <b>Keterangan:</b> ${reason}\n\n` : '\n') +
-      `Pesanan ini telah dibatalkan. Jika Anda ingin melakukan pemesanan baru, silakan buka menu katalog produk.`;
+    const message = `<b>ORDER CANCELLED</b>\n\n` +
+      `<b>Product:</b> ${order.product_title}\n` +
+      `<b>Order ID:</b> <code>${order.order_id}</code>\n` +
+      `<b>Amount:</b> ${amountText}\n` +
+      (reason ? `<b>Reason:</b> ${reason}\n\n` : '\n') +
+      `This order has been cancelled. If you wish to place a new order, please open the product catalog menu.`;
 
     for (const botInstance of (activeBots as any).values()) {
       try {
@@ -231,10 +224,6 @@ async function sendTelegramCancellationNotice(order: OrderNotification, reason?:
   }
 }
 
-// Body parsing middleware
-// Preserve the exact raw request bytes so webhook signature verification can
-// hash the original payload instead of a re-serialized copy.
-// Increase limit to 10mb for large notification templates
 app.use(express.json({
   limit: '10mb',
   verify: (req: any, _res, buf) => {
@@ -249,7 +238,6 @@ app.use(express.urlencoded({
   }
 }));
 
-// Body parser error handler - catch JSON parsing errors
 app.use((err: any, req: any, res: any, next: any) => {
   if (err instanceof SyntaxError && 'status' in err && err.status === 400 && 'body' in err) {
     console.error('[Body Parser Error] Invalid JSON:', err.message);
@@ -258,9 +246,6 @@ app.use((err: any, req: any, res: any, next: any) => {
   next(err);
 });
 
-// --- API ROUTES FIRST ---
-
-// 1. Health check & System Info
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -271,7 +256,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 1.4 Realtime Bot Engine Metrics (mode, uptime, latency, total requests)
 app.get('/api/engine/status', (req, res) => {
   try {
     res.json({ success: true, data: getBotEngineMetrics() });
@@ -280,13 +264,12 @@ app.get('/api/engine/status', (req, res) => {
   }
 });
 
-// 1.4.1 Manual Database Backup delivered straight to the admin Telegram chat
 app.post('/api/db/backup-telegram', async (req, res) => {
   try {
     const { chat_id } = req.body || {};
     const targetChat = chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID || process.env.ADMIN_TELEGRAM_ID;
     if (!targetChat) {
-      return res.status(400).json({ success: false, message: 'Alamat chat admin Telegram belum dikonfigurasi.' });
+      return res.status(400).json({ success: false, message: 'Telegram admin chat address is not configured.' });
     }
 
     const backup = await buildDatabaseBackup(dbService);
@@ -299,7 +282,7 @@ app.post('/api/db/backup-telegram', async (req, res) => {
           source: buffer,
           filename: `db_backup_${Date.now()}.json`
         }, {
-          caption: `🗄️ <b>Backup Database</b>\nProduk: ${backup.counts.products} | Pesanan: ${backup.counts.orders} | Pengguna: ${backup.counts.users}`,
+          caption: `<b>Database Backup</b>\nProducts: ${backup.counts.products} | Orders: ${backup.counts.orders} | Users: ${backup.counts.users}`,
           parse_mode: 'HTML'
         });
         sent = true;
@@ -310,25 +293,23 @@ app.post('/api/db/backup-telegram', async (req, res) => {
     }
 
     if (!sent) {
-      return res.status(502).json({ success: false, message: 'Gagal mengirim backup ke Telegram. Pastikan bot aktif.' });
+      return res.status(502).json({ success: false, message: 'Failed to send backup to Telegram. Ensure the bot is active.' });
     }
 
     try {
       await dbService.addSystemLog({ admin_id: 'web_admin', action: 'manual_db_backup_telegram' });
     } catch (e) {}
 
-    res.json({ success: true, message: 'Backup database berhasil dikirim ke chat Telegram admin.' });
+    res.json({ success: true, message: 'Database backup successfully sent to admin Telegram chat.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 1.5 Multi-Database Status & Cloud Storage Monitor
 app.get('/api/db/status', async (req, res) => {
   try {
     const multiStatus = await getMultiDbStatus();
 
-    // Check collections/tables counts
     const [prods, orders, stocks, admins] = await Promise.all([
       dbService.getProducts().catch(() => []),
       dbService.getOrders().catch(() => []),
@@ -360,7 +341,6 @@ app.get('/api/db/status', async (req, res) => {
   }
 });
 
-// 1.6 1-Click Auto-Create Tables in Supabase (No Manual SQL Migration Needed)
 app.post('/api/db/init-tables', async (req, res) => {
   try {
     const engine = (req.body?.engine || req.query?.engine || 'supabase') as string;
@@ -370,7 +350,7 @@ app.post('/api/db/init-tables', async (req, res) => {
 
     res.json({
       success: tableInitResult.success !== false,
-      message: tableInitResult.message || 'Tabel database berhasil dibuat dan disiapkan secara otomatis!',
+      message: tableInitResult.message || 'Database tables successfully created and prepared automatically!',
       details: tableInitResult,
       timestamp: new Date().toISOString()
     });
@@ -379,8 +359,6 @@ app.post('/api/db/init-tables', async (req, res) => {
   }
 });
 
-// 1.65 Universal Migration: migrate/sync to ANY registered database engine.
-// Body: { engine: 'supabase' | 'mysql' | 'mongodb' | 'firestore' | 'local' }
 app.post('/api/db/migrate', async (req, res) => {
   try {
     const engine = (req.body?.engine || req.query?.engine || 'supabase') as string;
@@ -395,14 +373,13 @@ app.post('/api/db/migrate', async (req, res) => {
   }
 });
 
-// 1.7 1-Click Full Data Migration to Supabase
 app.post('/api/db/migrate-supabase', async (req, res) => {
   try {
     console.log('[API] 1-Click Full Data Migration to Supabase requested...');
     const result = await migrateAllDataToSupabase(dbService);
     res.json({
       success: true,
-      message: 'Migrasi seluruh data (produk, stok, pesanan, settings, dompet, bot) ke Supabase sukses!',
+      message: 'Full data migration (products, stocks, orders, settings, wallets, bots) to Supabase successful!',
       data: result,
       timestamp: new Date().toISOString()
     });
@@ -425,7 +402,6 @@ app.get('/api/db/schema-sql', (req, res) => {
   }
 });
 
-// 1.8 Full JSON Data Export / Backup
 app.get('/api/db/export-backup', async (req, res) => {
   try {
     await dbService.ensureSeeded();
@@ -472,7 +448,6 @@ app.get('/api/db/export-backup', async (req, res) => {
   }
 });
 
-// 1.9 Test Connection to Individual Engine
 app.get('/api/db/test/:engine', async (req, res) => {
   const engine = req.params.engine.toLowerCase();
   try {
@@ -482,39 +457,39 @@ app.get('/api/db/test/:engine', async (req, res) => {
     }
     if (engine === 'firestore') {
       await dbService.ensureSeeded();
-      return res.json({ success: true, message: 'Google Cloud Firestore aktif dan tersinkronisasi normal.' });
+      return res.json({ success: true, message: 'Google Cloud Firestore is active and synchronized normally.' });
     }
     if (engine === 'local') {
       const localPath = path.join(process.cwd(), 'data', 'local_store.json');
       const exists = fs.existsSync(localPath);
-      return res.json({ success: true, message: `Local JSON Store aktif (${exists ? 'Data file ada' : 'Siap ditulis'}).` });
+      return res.json({ success: true, message: `Local JSON Store is active (${exists ? 'Data file exists' : 'Ready to write'}).` });
     }
     if (engine === 'redis') {
       const redisUrl = process.env.REDIS_URL;
       return res.json({
         success: Boolean(redisUrl),
-        message: redisUrl ? 'REDIS_URL terkonfigurasi di environment.' : 'REDIS_URL belum diisi (fallback aman ke in-memory cache).'
+        message: redisUrl ? 'REDIS_URL is configured in environment.' : 'REDIS_URL is not set (safe fallback to in-memory cache).'
       });
     }
     if (engine === 'mysql') {
       const mysqlUrl = process.env.MYSQL_URL || process.env.MYSQL_DATABASE_URL;
       if (!mysqlUrl) {
-        return res.json({ success: false, message: 'MYSQL_URL belum diisi (mode standby).' });
+        return res.json({ success: false, message: 'MYSQL_URL is not set (standby mode).' });
       }
       try {
         const mysql: any = await import('mysql2/promise');
         const conn = await mysql.createConnection(mysqlUrl);
         await conn.query('SELECT 1');
         await conn.end();
-        return res.json({ success: true, message: 'Koneksi MySQL berhasil & aktif.' });
+        return res.json({ success: true, message: 'MySQL connection successful & active.' });
       } catch (e: any) {
-        return res.json({ success: false, message: 'Gagal konek MySQL: ' + e.message });
+        return res.json({ success: false, message: 'Failed to connect to MySQL: ' + e.message });
       }
     }
     if (engine === 'mongodb') {
       const mongoUri = process.env.MONGODB_URI;
       if (!mongoUri) {
-        return res.json({ success: false, message: 'MONGODB_URI belum diisi (mode standby).' });
+        return res.json({ success: false, message: 'MONGODB_URI is not set (standby mode).' });
       }
       try {
         const mongodb: any = await import('mongodb');
@@ -522,19 +497,17 @@ app.get('/api/db/test/:engine', async (req, res) => {
         await client.connect();
         await client.db().command({ ping: 1 });
         await client.close();
-        return res.json({ success: true, message: 'Koneksi MongoDB berhasil & aktif.' });
+        return res.json({ success: true, message: 'MongoDB connection successful & active.' });
       } catch (e: any) {
-        return res.json({ success: false, message: 'Gagal konek MongoDB: ' + e.message });
+        return res.json({ success: false, message: 'Failed to connect to MongoDB: ' + e.message });
       }
     }
-    return res.status(400).json({ success: false, message: 'Engine database tidak dikenal.' });
+    return res.status(400).json({ success: false, message: 'Unknown database engine.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 2. Authentication:
-// Zero-fail login support with strict security lock once permanent database is initialized
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -542,8 +515,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Username and password are required' });
     }
 
-    // Step 1: Detect if database already has customized admin credentials
-    // If active database has custom admin password, automatically lock default fallback credentials!
     try {
       const admins = await dbService.getAdmins();
       if (admins && admins.length > 0) {
@@ -552,11 +523,8 @@ app.post('/api/auth/login', async (req, res) => {
           lockFallbackLogin(true);
         }
       }
-    } catch (dbCheckErr: any) {
-      // Database is offline/not reachable, fallback remains open
-    }
+    } catch (dbCheckErr: any) {}
 
-    // Step 2: Check ENV / fallback credentials (Zero DB dependency)
     const envAdmin = verifyEnvAdminLogin(username, password);
     if (envAdmin) {
       return res.json({
@@ -571,13 +539,11 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    // Step 3: Verify against database if available
     try {
       await dbService.ensureSeeded();
       const admin = await dbService.verifyAdminLogin(username, password);
 
       if (admin) {
-        // Successful permanent DB login locks fallback
         lockFallbackLogin(true);
         return res.json({
           success: true,
@@ -596,11 +562,9 @@ app.post('/api/auth/login', async (req, res) => {
 
     return res.status(401).json({
       success: false,
-      message: 'Username atau password yang Anda masukkan salah.'
+      message: 'The username or password you entered is incorrect.'
     });
   } catch (err: any) {
-    // Absolute last-resort guard: login must never crash the request.
-    // If anything unexpected happens, still attempt the zero-DB fallback.
     try {
       const fallback = verifyEnvAdminLogin(req.body?.username, req.body?.password);
       if (fallback) {
@@ -616,11 +580,10 @@ app.post('/api/auth/login', async (req, res) => {
         });
       }
     } catch (innerErr) {}
-    res.status(200).json({ success: false, message: 'Login gagal diproses. Silakan coba lagi.' });
+    res.status(200).json({ success: false, message: 'Login failed to process. Please try again.' });
   }
 });
 
-// 2.1 Auth Status: reports whether the default fallback login is still usable
 app.get('/api/auth/status', async (req, res) => {
   try {
     let fallbackLocked = isFallbackLocked();
@@ -640,25 +603,22 @@ app.get('/api/auth/status', async (req, res) => {
   }
 });
 
-// 2.2 Change Admin Password: permanently locks the default fallback credentials
 app.post('/api/auth/change-password', async (req, res) => {
   try {
     const { username, new_password, current_password, new_username } = req.body || {};
     if (!new_password || String(new_password).trim().length < 4) {
-      return res.status(400).json({ success: false, message: 'Password baru minimal 4 karakter.' });
+      return res.status(400).json({ success: false, message: 'New password must be at least 4 characters.' });
     }
 
-    // Verify the requester knows the current credential before rotating it
     const verified = verifyEnvAdminLogin(username || 'admin', current_password);
     if (!verified) {
-      return res.status(401).json({ success: false, message: 'Password saat ini tidak valid.' });
+      return res.status(401).json({ success: false, message: 'Current password is invalid.' });
     }
 
     const targetUsername = new_username || username || 'admin';
     savePermanentAdminPassword(targetUsername, new_password);
     lockFallbackLogin(true);
 
-    // Best-effort sync to the active database
     try {
       await dbService.addAdmin({
         username: targetUsername,
@@ -677,40 +637,35 @@ app.post('/api/auth/change-password', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Password admin berhasil diperbarui. Login fallback default kini terkunci.'
+      message: 'Admin password successfully updated. Default fallback login is now locked.'
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 2.3 Update Admin Username/Password (Root Admin only)
 app.put('/api/auth/update-admin', async (req, res) => {
   try {
     const { username, new_username, new_password, current_password } = req.body || {};
     if (!username) {
-      return res.status(400).json({ success: false, message: 'Username admin yang akan diubah wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Admin username to be changed is required' });
     }
 
-    // Verify current password for the admin making the request
     const verified = verifyEnvAdminLogin(username, current_password);
     if (!verified) {
-      // Try DB verification
       try {
         const admin = await dbService.verifyAdminLogin(username, current_password);
         if (!admin) {
-          return res.status(401).json({ success: false, message: 'Password saat ini tidak valid.' });
+          return res.status(401).json({ success: false, message: 'Current password is invalid.' });
         }
       } catch (e) {
-        return res.status(401).json({ success: false, message: 'Password saat ini tidak valid.' });
+        return res.status(401).json({ success: false, message: 'Current password is invalid.' });
       }
     }
 
-    // Root admin (root@admin.com) can update any admin
-    // Other admins can only update themselves
     const isRoot = verified.username === 'root@admin.com' || verified.username === 'admin';
     if (!isRoot && username !== verified.username) {
-      return res.status(403).json({ success: false, message: 'Hanya root admin yang bisa mengubah admin lain' });
+      return res.status(403).json({ success: false, message: 'Only root admin can change other admins' });
     }
 
     const targetUsername = new_username || username;
@@ -719,7 +674,6 @@ app.put('/api/auth/update-admin', async (req, res) => {
       lockFallbackLogin(true);
     }
 
-    // Update in database
     try {
       await dbService.addAdmin({
         username: targetUsername,
@@ -738,14 +692,13 @@ app.put('/api/auth/update-admin', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Admin berhasil diperbarui'
+      message: 'Admin successfully updated'
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 3. Overall Store Statistics
 app.get('/api/stats', async (req, res) => {
   try {
     await dbService.ensureSeeded();
@@ -778,7 +731,6 @@ app.get('/api/stats', async (req, res) => {
     const pendingOrders = orders.filter((o: any) => o.payment_status === 'PENDING').length;
     const completedOrders = orders.filter((o: any) => o.payment_status === 'PAID' || o.payment_status === 'VERIFIED_BY_ADMIN').length;
 
-    // Perhitungan presisi untuk bot online/aktif berdasarkan data token bot
     const onlineBotsCount = (botTokens || []).filter((b: any) => {
       return Boolean(
         b.status === 'online' ||
@@ -812,8 +764,6 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-
-// 3b. Detailed Financial Reports with IDR/USD conversion
 app.get('/api/reports/financial', async (req, res) => {
   try {
     const { start_date, end_date, period } = req.query as Record<string, string>;
@@ -823,7 +773,6 @@ app.get('/api/reports/financial', async (req, res) => {
       o.payment_status === 'PAID' || o.payment_status === 'VERIFIED_BY_ADMIN'
     );
 
-    // Filter by date range
     let filteredOrders = paidOrders;
     if (start_date && end_date) {
       const start = new Date(start_date);
@@ -850,7 +799,6 @@ app.get('/api/reports/financial', async (req, res) => {
       filteredOrders = paidOrders.filter((o: any) => new Date(o.created_at) >= start);
     }
 
-    // Exchange rate (can be made dynamic via API in future)
     const USD_TO_IDR = 16000;
 
     const summary = filteredOrders.reduce((acc, o) => {
@@ -885,7 +833,6 @@ app.get('/api/reports/financial', async (req, res) => {
       byProductRevenue: {}
     });
 
-    // Daily breakdown
     const dailyBreakdown = filteredOrders.reduce((acc, o) => {
       const date = new Date(o.created_at).toISOString().split('T')[0];
       if (!acc[date]) {
@@ -929,13 +876,11 @@ app.get('/api/reports/financial', async (req, res) => {
   }
 });
 
-// 4. Products Management
 app.get('/api/products', async (req, res) => {
   try {
     const products = await dbService.getProducts();
     const stocks = await dbService.getStocks();
 
-    // Attach current available stock count to each product
     const enriched = products.map((p: any) => {
       const pStocks = stocks.filter((s: any) => s.product_id === p.product_id && s.status === 'AVAILABLE');
       return {
@@ -971,7 +916,6 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// 5. Stocks Inventory (Email:Password:Cookie)
 app.get('/api/stocks', async (req, res) => {
   try {
     const productId = req.query.product_id ? String(req.query.product_id) : null;
@@ -1024,7 +968,6 @@ app.delete('/api/stocks/:id', async (req, res) => {
   }
 });
 
-// Helper to extract file_id from order
 function extractFileIdFromOrder(order: any): string | null {
   if (!order) return null;
   if (order.receipt_file_id) return order.receipt_file_id;
@@ -1036,10 +979,8 @@ function extractFileIdFromOrder(order: any): string | null {
   return null;
 }
 
-// Helper to get Telegram file link
 async function getTelegramFileDirectUrl(fileId: string): Promise<string | null> {
   if (!fileId) return null;
-  // Try active bots
   for (const botInstance of (activeBots as any).values()) {
     try {
       if (botInstance.bot && botInstance.bot.telegram) {
@@ -1049,7 +990,6 @@ async function getTelegramFileDirectUrl(fileId: string): Promise<string | null> 
     } catch (e: any) {}
   }
 
-  // Fallback: lookup bot tokens directly from Firestore
   try {
     const tokens = await dbService.getBotTokens();
     for (const t of tokens) {
@@ -1069,8 +1009,6 @@ async function getTelegramFileDirectUrl(fileId: string): Promise<string | null> 
   return null;
 }
 
-// Shared helper: stream a remote (Telegram or external) file straight to the
-// HTTP response, avoiding duplicated fetch/buffer/header logic across endpoints.
 async function streamRemoteFile(
   fileUrl: string,
   res: express.Response,
@@ -1078,8 +1016,8 @@ async function streamRemoteFile(
 ) {
   const {
     defaultContentType = 'image/jpeg',
-    notFoundMessage = 'File tidak ditemukan',
-    downloadErrorMessage = 'Gagal mengunduh file.'
+    notFoundMessage = 'No image proof for this order.',
+    downloadErrorMessage = 'Failed to download file.'
   } = options;
 
   if (!fileUrl) {
@@ -1098,7 +1036,6 @@ async function streamRemoteFile(
   return res.send(buffer);
 }
 
-// Shared coupon evaluator used by both the API and the Telegram bot checkout.
 function evaluateCoupon(coupon: any, baseAmount: number): {
   success: boolean;
   valid: boolean;
@@ -1108,15 +1045,15 @@ function evaluateCoupon(coupon: any, baseAmount: number): {
   final_amount?: number;
 } {
   if (!coupon) {
-    return { success: true, valid: false, message: 'Kode kupon tidak ditemukan atau tidak valid.' };
+    return { success: true, valid: false, message: 'Coupon code not found or invalid.' };
   }
   if (coupon.is_active === false) {
-    return { success: true, valid: false, message: 'Kode kupon ini sedang tidak aktif.' };
+    return { success: true, valid: false, message: 'This coupon code is currently inactive.' };
   }
   const maxUses = Number(coupon.max_uses) || 0;
   const usedCount = Number(coupon.used_count) || 0;
   if (maxUses > 0 && usedCount >= maxUses) {
-    return { success: true, valid: false, message: 'Kode kupon sudah mencapai batas pemakaian.' };
+    return { success: true, valid: false, message: 'Coupon code has reached its usage limit.' };
   }
 
   const pct = Number(coupon.discount_percentage) || 0;
@@ -1130,12 +1067,10 @@ function evaluateCoupon(coupon: any, baseAmount: number): {
     code: coupon.code,
     discount_amount: discountAmount,
     final_amount: finalAmount,
-    message: `Kupon ${coupon.code} berhasil diterapkan! Potongan Rp ${discountAmount.toLocaleString('id-ID')}.`
+    message: `Coupon ${coupon.code} successfully applied! Discount Rp ${discountAmount.toLocaleString('en-US')}.`
   };
 }
 
-// Shared service: resolve a product, verify stock, then build & persist an order
-// for either manual crypto or automatic NOWPayments settlement.
 type CreateOrderResult =
   | { kind: 'error'; ok: false; status: number; message: string }
   | { kind: 'invoice'; ok: true; type: 'invoice'; order: any; order_id: string; qr_url: string; token_url: string; instructions?: string };
@@ -1166,7 +1101,6 @@ async function createOrderFromProduct(params: {
   }
   const product = getLocalizedProduct(rawProduct, lang);
 
-  // Determine if this is an IDR payment (QRIS, ewallet, bank, etc.)
   const isIdrPayment = ['qris', 'ewallet', 'bank', 'bank_transfer', 'manual_idr'].includes(paymentMethod || '');
   const isCryptoManual = paymentMethod === 'crypto_manual';
   const orderAmount = isIdrPayment ? (product.price_idr || product.price_usd * 16000) : product.price_usd;
@@ -1184,12 +1118,11 @@ async function createOrderFromProduct(params: {
       }
     }
     if (!wallet) {
-      return { kind: 'error', ok: false, status: 400, message: 'Belum ada dompet kripto manual yang dikonfigurasi admin.' };
+      return { kind: 'error', ok: false, status: 400, message: 'No manual crypto wallet configured by admin yet.' };
     }
 
     const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
-
-const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
+    const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
     const qrUrl = wallet.qr_url || getQrCodeUrl(wallet.address, 300);
 
@@ -1226,22 +1159,18 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     };
   }
 
-  // Manual IDR Payment Methods (QRIS, E-Wallet, Bank Transfer)
   if (isIdrPayment) {
-    // Get the payment method details for QR image and instructions
     let paymentMethodDetails = null;
     const allMethods = await dbService.getPaymentMethods();
     if (paymentMethod) {
       paymentMethodDetails = allMethods.find((m: any) => m.method_id === paymentMethod || m.type === paymentMethod || m.id === paymentMethod);
     }
-    // Fallback to first active method of matching type
     if (!paymentMethodDetails) {
       paymentMethodDetails = allMethods.find((m: any) => m.type === paymentMethod && m.is_active !== false);
     }
 
     const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
-
-const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
+    const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
     const orderDoc = {
       order_id: orderId,
@@ -1259,7 +1188,7 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
       amount: orderAmount,
       currency: orderCurrency,
       total_amount_idr: isIdrPayment ? orderAmount : null,
-      unique_code: Math.floor(100 + Math.random() * 900), // 3-digit unique code for bank transfer verification
+      unique_code: Math.floor(100 + Math.random() * 900),
       account_delivered: null,
       payment_proof: null,
       created_at: new Date().toISOString(),
@@ -1284,14 +1213,12 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
     };
   }
 
-  // Automatic Payment (NOWPayments)
   if (typeof (cryptoGateway as any).isConfigured === 'function' && !(cryptoGateway as any).isConfigured()) {
-    return { kind: 'error', ok: false, status: 503, message: 'Pembayaran otomatis kripto belum aktif (gateway belum terhubung). Silakan gunakan metode Bayar Manual.' };
+    return { kind: 'error', ok: false, status: 503, message: 'Automatic crypto payment is not active (gateway not connected). Please use Manual Payment method.' };
   }
 
   const generateRandomChar = () => String.fromCharCode(65 + Math.floor(Math.random() * 26));
-
-const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
+  const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRandomChar()}`;
 
   const payRes = await cryptoGateway.createPayment({
     orderId,
@@ -1302,7 +1229,7 @@ const orderId = `S-${Math.floor(100000 + Math.random() * 900000)}-${generateRand
   });
 
   if (!payRes.success || !payRes.payAddress) {
-    return { kind: 'error', ok: false, status: 502, message: payRes.error || 'Gateway pembayaran otomatis gagal membuat invoice.' };
+    return { kind: 'error', ok: false, status: 502, message: payRes.error || 'Automatic payment gateway failed to create invoice.' };
   }
 
   const depositAddr = payRes.payAddress;
@@ -1339,10 +1266,10 @@ function enrichOrderReceipt(order: any) {
   const fileId = extractFileIdFromOrder(order);
   let cleanTxHash = order.tx_hash || '';
   if (cleanTxHash.includes('[Bukti Gambar ID:') || cleanTxHash.includes('[Photo:')) {
-    cleanTxHash = cleanTxHash.replace(/\[(?:Bukti Gambar ID|Photo):\s*[a-zA-Z0-9_\-]+\]/g, 'Foto Bukti Transfer').trim();
-    if (!cleanTxHash) cleanTxHash = 'Foto Bukti Transfer';
+    cleanTxHash = cleanTxHash.replace(/\[(?:Bukti Gambar ID|Photo):\s*[a-zA-Z0-9_\-]+\]/g, 'Transfer Proof Photo').trim();
+    if (!cleanTxHash) cleanTxHash = 'Transfer Proof Photo';
   }
-  const lang = order.user_lang || 'id';
+  const lang = order.user_lang || 'en';
   return {
     ...order,
     tx_hash: cleanTxHash || order.tx_hash,
@@ -1356,14 +1283,12 @@ function enrichOrderReceipt(order: any) {
   };
 }
 
-// 6. Orders Management & Manual Verification
 app.get('/api/orders', async (req, res) => {
   try {
     const orders = await dbService.getOrders();
     const now = new Date().getTime();
     const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
-    // Filter pesanan yang kadaluarsa (> 3 hari dan status PENDING)
     const validOrders = [];
     for (const order of orders) {
       const isPending = order.payment_status === 'PENDING';
@@ -1371,7 +1296,6 @@ app.get('/api/orders', async (req, res) => {
       const isExpired = (now - createdAtMs) > THREE_DAYS_MS;
 
       if (isPending && isExpired) {
-        // Hapus pesanan dan kembalikan stok yang diklaim (jika ada) dari database
         await dbService.releaseClaimedStock(order.order_id || order.id);
       } else {
         validOrders.push(order);
@@ -1385,7 +1309,6 @@ app.get('/api/orders', async (req, res) => {
   }
 });
 
-
 app.get('/api/orders/:id', async (req, res) => {
   try {
     const order = await dbService.getOrder(req.params.id);
@@ -1398,61 +1321,58 @@ app.get('/api/orders/:id', async (req, res) => {
   }
 });
 
-// Endpoint to stream the pure receipt image directly
 app.get('/api/orders/:id/receipt-image', async (req, res) => {
   try {
     const orderId = req.params.id;
     const order = await dbService.getOrder(orderId);
     if (!order) {
-      return res.status(404).send('Pesanan tidak ditemukan');
+      return res.status(404).send('Order not found');
     }
 
     const fileId = extractFileIdFromOrder(order);
 
     if (!fileId && order.receipt_image_url && order.receipt_image_url.startsWith('http')) {
       return streamRemoteFile(order.receipt_image_url, res, {
-        notFoundMessage: 'Tidak ada bukti gambar untuk pesanan ini.',
-        downloadErrorMessage: 'Gagal mengunduh gambar bukti dari sumber eksternal.'
+        notFoundMessage: 'No image proof for this order.',
+        downloadErrorMessage: 'Failed to download proof image from external source.'
       });
     }
 
     if (!fileId) {
-      return res.status(404).send('Tidak ada bukti gambar untuk pesanan ini.');
+      return res.status(404).send('No image proof for this order.');
     }
 
     const fileUrl = await getTelegramFileDirectUrl(fileId);
     if (!fileUrl) {
-      return res.status(404).send('Gagal mengambil file gambar dari server Telegram. Pastikan bot aktif.');
+      return res.status(404).send('Failed to fetch image file from Telegram server. Ensure bot is active.');
     }
 
     return streamRemoteFile(fileUrl, res, {
-      notFoundMessage: 'Tidak ada bukti gambar untuk pesanan ini.',
-      downloadErrorMessage: 'Gagal mengunduh gambar dari Telegram.'
+      notFoundMessage: 'No image proof for this order.',
+      downloadErrorMessage: 'Failed to download image from Telegram.'
     });
   } catch (err: any) {
     console.error('[Receipt Image Error]:', err.message);
-    res.status(500).send(`Terjadi kesalahan: ${err.message}`);
+    res.status(500).send(`An error occurred: ${err.message}`);
   }
 });
 
-// Generic endpoint to stream any Telegram file by ID
 app.get('/api/telegram-file/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
     const fileUrl = await getTelegramFileDirectUrl(fileId);
     if (!fileUrl) {
-      return res.status(404).send('File tidak ditemukan di Telegram');
+      return res.status(404).send('File not found on Telegram');
     }
     return streamRemoteFile(fileUrl, res, {
-      notFoundMessage: 'File tidak ditemukan di Telegram',
-      downloadErrorMessage: 'Gagal mengunduh file dari Telegram'
+      notFoundMessage: 'File not found on Telegram',
+      downloadErrorMessage: 'Failed to download file from Telegram'
     });
   } catch (err: any) {
     res.status(500).send(err.message);
   }
 });
 
-// Direct Checkout Endpoint (for frontend simulator or direct API payment initiation)
 app.post('/api/orders/checkout', async (req, res) => {
   try {
     const { user_id, username, product_id, payment_method, wallet_id, currency, user_lang } = req.body;
@@ -1461,7 +1381,7 @@ app.post('/api/orders/checkout', async (req, res) => {
       productId: product_id,
       userId: user_id || 'guest_buyer',
       username: username || 'buyer',
-      lang: user_lang || 'id',
+      lang: user_lang || 'en',
       paymentMethod: payment_method,
       walletId: wallet_id,
       currency
@@ -1491,7 +1411,7 @@ app.post('/api/orders/:id/approve', async (req, res) => {
     const orderId = req.params.id;
     const order = await dbService.getOrder(orderId);
     if (!order) {
-      return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
     let deliveredAccount = order.account_delivered;
@@ -1501,15 +1421,14 @@ app.post('/api/orders/:id/approve', async (req, res) => {
         if (stock && stock.account_data) {
           deliveredAccount = stock.account_data;
         } else {
-          deliveredAccount = 'Akun fisik belum tersedia di stok. Admin dapat melampirkan akun manual.';
+          deliveredAccount = 'Physical account not available in stock. Admin can attach account manually.';
         }
       } catch (stockErr: any) {
         console.warn('Stock claim fallback:', stockErr.message);
-        deliveredAccount = 'Akun siap dikirim manual oleh admin.';
+        deliveredAccount = 'Account ready to be sent manually by admin.';
       }
     }
 
-    // Get product info to include product_url if available
     let productUrl = null;
     try {
       const product = await dbService.getProduct(order.product_id);
@@ -1524,7 +1443,6 @@ app.post('/api/orders/:id/approve', async (req, res) => {
       updated_at: new Date().toISOString()
     });
 
-    // Send delivery notice with product URL if available
     const orderWithUrl = { ...order, order_id: orderId, product_url: productUrl };
     sendTelegramDeliveryNotice(orderWithUrl, deliveredAccount).catch(() => {});
 
@@ -1536,13 +1454,12 @@ app.post('/api/orders/:id/approve', async (req, res) => {
   }
 });
 
-// Cancel Order: Sets status to CANCELLED, releases any reserved stock back to AVAILABLE
 app.post('/api/orders/:id/cancel', async (req, res) => {
   try {
     const orderId = req.params.id;
     const order = await dbService.getOrder(orderId);
     if (!order) {
-      return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
     try {
@@ -1566,7 +1483,6 @@ app.post('/api/orders/:id/cancel', async (req, res) => {
   }
 });
 
-// Reject Order: aliases to cancel, or permanently deletes if action=delete
 app.post('/api/orders/:id/reject', async (req, res) => {
   try {
     const orderId = req.params.id;
@@ -1579,7 +1495,7 @@ app.post('/api/orders/:id/reject', async (req, res) => {
 
     const order = await dbService.getOrder(orderId);
     if (!order) {
-      return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
     try {
@@ -1601,7 +1517,6 @@ app.post('/api/orders/:id/reject', async (req, res) => {
   }
 });
 
-// Reset single completed or cancelled order back to PENDING
 app.post('/api/orders/:id/reset', async (req, res) => {
   try {
     const orderId = req.params.id;
@@ -1611,7 +1526,7 @@ app.post('/api/orders/:id/reset', async (req, res) => {
       order_id: orderId, 
       order: resetOrder, 
       status: 'PENDING',
-      message: 'Pesanan berhasil di-reset ke status Pending.' 
+      message: 'Order successfully reset to Pending status.' 
     });
   } catch (err: any) {
     console.error('Reset order error:', err);
@@ -1619,7 +1534,6 @@ app.post('/api/orders/:id/reset', async (req, res) => {
   }
 });
 
-// Bulk reset completed orders
 app.post('/api/orders/reset-completed', async (req, res) => {
   try {
     const mode = req.body?.mode || 'to_pending';
@@ -1628,7 +1542,7 @@ app.post('/api/orders/reset-completed', async (req, res) => {
       success: true, 
       count, 
       mode, 
-      message: `Berhasil mereset ${count} pesanan selesai.` 
+      message: `Successfully reset ${count} completed orders.` 
     });
   } catch (err: any) {
     console.error('Reset completed orders error:', err);
@@ -1636,7 +1550,6 @@ app.post('/api/orders/reset-completed', async (req, res) => {
   }
 });
 
-// Full Backup of Orders (JSON or CSV)
 app.get('/api/orders/backup', async (req, res) => {
   try {
     const orders = await dbService.getOrders();
@@ -1667,7 +1580,7 @@ app.get('/api/orders/backup', async (req, res) => {
         o.order_id || '',
         o.user_id || '',
         o.username || '',
-        o.user_lang || 'id',
+        o.user_lang || 'en',
         o.product_id || '',
         `"${(o.product_title || '').replace(/"/g, '""')}"`,
         o.amount || 0,
@@ -1727,7 +1640,6 @@ app.post('/api/orders/purge-cancelled', async (req, res) => {
   }
 });
 
-// 7. Crypto Wallets CRUD
 app.get('/api/wallets', async (req, res) => {
   try {
     const wallets = await dbService.getCryptoWallets();
@@ -1763,11 +1675,9 @@ app.delete('/api/wallets/:id', async (req, res) => {
   }
 });
 
-// 7b. Payment Methods Management (QRIS, E-Wallet, Bank, Crypto)
 app.get('/api/payment-methods', async (req, res) => {
   try {
     const methods = await dbService.getPaymentMethods();
-    // Map database 'id' to frontend 'method_id'
     const mappedMethods = methods.map((m: any) => ({
       ...m,
       method_id: m.id || m.method_id,
@@ -1783,7 +1693,7 @@ app.post('/api/payment-methods', async (req, res) => {
   try {
     const methodData = req.body;
     if (!methodData.name) {
-      return res.status(400).json({ success: false, message: 'Nama metode wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Method name is required' });
     }
     const methodId = methodData.method_id || methodData.id || `pm_${Date.now()}`;
     const newMethod = {
@@ -1829,11 +1739,10 @@ app.patch('/api/payment-methods/:id/toggle', async (req, res) => {
     const methods = await dbService.getPaymentMethods();
     const existing = methods.find((m: any) => (m.id || m.method_id) === methodId);
     if (!existing) {
-      return res.status(404).json({ success: false, message: 'Metode pembayaran tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Payment method not found' });
     }
     existing.is_active = !existing.is_active;
     existing.updated_at = new Date().toISOString();
-    // Ensure both id and method_id are set
     existing.id = existing.id || existing.method_id || methodId;
     existing.method_id = existing.id;
     await dbService.savePaymentMethod(existing);
@@ -1852,7 +1761,6 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
   }
 });
 
-// 7b2. Coupons Management (Dynamic Discount Codes)
 app.get('/api/coupons', async (req, res) => {
   try {
     const coupons = await dbService.getCoupons();
@@ -1866,7 +1774,7 @@ app.post('/api/coupons', async (req, res) => {
   try {
     const { code } = req.body || {};
     if (!code || !String(code).trim()) {
-      return res.status(400).json({ success: false, message: 'Kode kupon wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Coupon code is required' });
     }
     const saved = await dbService.saveCoupon(req.body);
     res.json({ success: true, data: saved });
@@ -1889,7 +1797,7 @@ app.patch('/api/coupons/:id/toggle', async (req, res) => {
     const coupons = await dbService.getCoupons();
     const existing = coupons.find((c: any) => c.coupon_id === req.params.id);
     if (!existing) {
-      return res.status(404).json({ success: false, message: 'Kupon tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Coupon not found' });
     }
     const saved = await dbService.saveCoupon({ ...existing, is_active: !existing.is_active });
     res.json({ success: true, data: saved });
@@ -1907,7 +1815,6 @@ app.delete('/api/coupons/:id', async (req, res) => {
   }
 });
 
-// Public coupon validation for the bot / checkout flow
 app.post('/api/coupons/validate', async (req, res) => {
   try {
     const { code, amount_idr } = req.body || {};
@@ -1919,7 +1826,6 @@ app.post('/api/coupons/validate', async (req, res) => {
   }
 });
 
-// 7c. Channels Management (Official Telegram Channels & Referral Sources)
 app.get('/api/channels', async (req, res) => {
   try {
     const channels = await dbService.getChannels();
@@ -1933,7 +1839,7 @@ app.post('/api/channels', async (req, res) => {
   try {
     const chData = req.body;
     if (!chData.name) {
-      return res.status(400).json({ success: false, message: 'Nama channel wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Channel name is required' });
     }
     const channelId = chData.channel_id || `ch_${Date.now()}`;
     const newChannel = {
@@ -1979,7 +1885,7 @@ app.patch('/api/channels/:id/toggle', async (req, res) => {
     const channels = await dbService.getChannels();
     const existing = channels.find((c: any) => c.channel_id === channelId);
     if (!existing) {
-      return res.status(404).json({ success: false, message: 'Channel tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Channel not found' });
     }
     existing.is_active = !existing.is_active;
     existing.updated_at = new Date().toISOString();
@@ -1999,7 +1905,6 @@ app.delete('/api/channels/:id', async (req, res) => {
   }
 });
 
-// 7d. Referral Links Management (Tautan Promosi Khusus per Channel/Bot)
 app.get('/api/referral-links', async (req, res) => {
   try {
     const channelId = req.query.channel_id as string | undefined;
@@ -2014,7 +1919,7 @@ app.get('/api/referral-links/:id', async (req, res) => {
   try {
     const link = await dbService.getReferralLink(req.params.id);
     if (!link) {
-      return res.status(404).json({ success: false, message: 'Referral link tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Referral link not found' });
     }
     res.json({ success: true, data: link });
   } catch (err: any) {
@@ -2026,7 +1931,7 @@ app.post('/api/referral-links', async (req, res) => {
   try {
     const { channel_id, channel_name, bot_token_id, bot_name, referral_code, referral_link } = req.body;
     if (!channel_id || !channel_name || !referral_code) {
-      return res.status(400).json({ success: false, message: 'channel_id, channel_name, dan referral_code wajib diisi' });
+      return res.status(400).json({ success: false, message: 'channel_id, channel_name, and referral_code are required' });
     }
     const saved = await dbService.saveReferralLink(req.body);
     res.json({ success: true, data: saved });
@@ -2053,7 +1958,6 @@ app.delete('/api/referral-links/:id', async (req, res) => {
   }
 });
 
-// Referral Clicks Tracking
 app.get('/api/referral-links/:id/clicks', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 100;
@@ -2064,44 +1968,26 @@ app.get('/api/referral-links/:id/clicks', async (req, res) => {
   }
 });
 
-
-// Generate referral link for a channel/bot
-// Referral Clicks Tracking & Recording
-app.get('/api/referral-links/:id/clicks', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit as string) || 100;
-    const clicks = await dbService.getReferralClicks(req.params.id, limit);
-    res.json({ success: true, data: clicks });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// Endpoint untuk menangkap dan meng-update counter klik referral secara otomatis
 app.post('/api/referral-links/:identifier/click', async (req, res) => {
   try {
     const { identifier } = req.params;
     const { telegram_id, username, first_name } = req.body;
 
-    // Cari berdasarkan referral_id atau referral_code
     let link = await dbService.getReferralLink(identifier);
     if (!link) {
       link = await dbService.getReferralLinkByCode(identifier);
     }
 
     if (!link) {
-      return res.status(404).json({ success: false, message: 'Referral link tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Referral link not found' });
     }
 
-    // 1. Increment total klik pada referral link
     const updatedLink = await dbService.incrementReferralClick(link.referral_id);
 
-    // 2. Increment total klik pada channel terkait
     if (link.channel_id) {
       await dbService.incrementChannelCounter(link.channel_id, 'clicks_count', 1);
     }
 
-    // 3. Catat log riwayat klik pengguna
     const clickRecord = await dbService.saveReferralClick({
       referral_id: link.referral_id,
       telegram_id: telegram_id ? String(telegram_id) : '',
@@ -2123,23 +2009,21 @@ app.post('/api/referral-links/:identifier/click', async (req, res) => {
   }
 });
 
-// Generate referral link for a channel/bot
 app.post('/api/referral-links/generate', async (req, res) => {
   try {
     const { channel_id, bot_token_id, custom_code } = req.body;
     if (!channel_id) {
-      return res.status(400).json({ success: false, message: 'channel_id wajib diisi' });
+      return res.status(400).json({ success: false, message: 'channel_id is required' });
     }
     
     const channel = await dbService.getChannels().then(channels => channels.find(c => c.channel_id === channel_id));
     if (!channel) {
-      return res.status(404).json({ success: false, message: 'Channel tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Channel not found' });
     }
 
     const referralCode = custom_code || `${channel.username || 'CH'}${Date.now().toString().slice(-6)}`.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20);
     const bot = bot_token_id ? await dbService.getBotTokens().then(bots => bots.find(b => b.token_id === bot_token_id)) : null;
     
-    // Get bot username for referral link
     let botUsername = 'bot';
     if (bot?.bot_token) {
       try {
@@ -2151,7 +2035,6 @@ app.post('/api/referral-links/generate', async (req, res) => {
       } catch (e) {}
     }
 
-    // Add ref_ prefix for bot tracking
     const referralLink = `https://t.me/${botUsername}?start=ref_${referralCode}`;
     
     const saved = await dbService.saveReferralLink({
@@ -2164,7 +2047,6 @@ app.post('/api/referral-links/generate', async (req, res) => {
       is_active: true
     });
 
-    // Update channel with referral info
     await dbService.saveChannel({
       ...channel,
       referral_code: referralCode,
@@ -2177,7 +2059,6 @@ app.post('/api/referral-links/generate', async (req, res) => {
   }
 });
 
-// 7e. Broadcast History Management (Riwayat Broadcast Massal)
 app.get('/api/broadcast/history', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
@@ -2192,7 +2073,7 @@ app.get('/api/broadcast/history/:id', async (req, res) => {
   try {
     const broadcast = await dbService.getBroadcastHistoryById(req.params.id);
     if (!broadcast) {
-      return res.status(404).json({ success: false, message: 'Riwayat broadcast tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Broadcast history not found' });
     }
     res.json({ success: true, data: broadcast });
   } catch (err: any) {
@@ -2209,7 +2090,6 @@ app.delete('/api/broadcast/history/:id', async (req, res) => {
   }
 });
 
-// 7f. Super Admin Management (Root Admin - hanya superadmin yang bisa CRUD)
 app.get('/api/super-admins', async (req, res) => {
   try {
     const admins = await dbService.getSuperAdmins();
@@ -2223,7 +2103,7 @@ app.get('/api/super-admins/:id', async (req, res) => {
   try {
     const admin = await dbService.getSuperAdmin(req.params.id);
     if (!admin) {
-      return res.status(404).json({ success: false, message: 'Super admin tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Super admin not found' });
     }
     res.json({ success: true, data: admin });
   } catch (err: any) {
@@ -2235,7 +2115,7 @@ app.post('/api/super-admins', async (req, res) => {
   try {
     const { username, password, permissions, is_root } = req.body;
     if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username dan password wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Username and password are required' });
     }
     const saved = await dbService.saveSuperAdmin({
       username,
@@ -2253,30 +2133,26 @@ app.put('/api/super-admins/:id', async (req, res) => {
   try {
     const admin = await dbService.getSuperAdmin(req.params.id);
     if (!admin) {
-      return res.status(404).json({ success: false, message: 'Super admin tidak ditemukan' });
+      return res.status(404).json({ success: false, message: 'Super admin not found' });
     }
-    // Allow root admin to update themselves fully (username, password, permissions, is_root)
-    // Regular admins cannot modify root admins
+    
     const currentUser = req.body.current_user || req.headers['x-current-user'];
     const isRootUser = currentUser === 'root@admin.com' || currentUser === 'root_admin';
     
     if (admin.is_root && !isRootUser) {
-      return res.status(403).json({ success: false, message: 'Hanya root admin yang bisa mengubah root admin' });
+      return res.status(403).json({ success: false, message: 'Only root admin can change root admin' });
     }
     
-    // For non-root admins trying to edit another admin (not themselves)
     if (!isRootUser && currentUser !== admin.username && currentUser !== admin.admin_id) {
-      return res.status(403).json({ success: false, message: 'Tidak diizinkan mengubah admin lain' });
+      return res.status(403).json({ success: false, message: 'Not allowed to change other admins' });
     }
 
-    // Prepare update data
     const updateData = {
       ...req.body,
       admin_id: req.params.id,
       updated_at: new Date().toISOString()
     };
     
-    // If password is empty, don't update it
     if (!updateData.password || updateData.password === '') {
       delete updateData.password;
       delete updateData.password_hash;
@@ -2301,7 +2177,6 @@ app.delete('/api/super-admins/:id', async (req, res) => {
   }
 });
 
-// 8. Bot Tokens & Multi-Bot Polling Manager
 app.get('/api/bots', async (req, res) => {
   try {
     const tokens = await dbService.getBotTokens();
@@ -2389,7 +2264,6 @@ app.delete('/api/bots/:id', async (req, res) => {
   }
 });
 
-// 9. Settings Configuration (Text, Audio, NOWPayments API)
 app.get('/api/settings', async (req, res) => {
   try {
     const settings = await dbService.getSettings();
@@ -2418,7 +2292,6 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
-// 9.5 Data Export & Backup (CSV / JSON)
 app.get('/api/export/:dataset', async (req, res) => {
   try {
     const { dataset } = req.params;
@@ -2463,7 +2336,7 @@ app.get('/api/export/:dataset', async (req, res) => {
 
     if (format === 'csv') {
       if (dataset === 'all') {
-        return res.status(400).json({ success: false, message: 'Cadangan gabungan (All) hanya didukung dalam format JSON.' });
+        return res.status(400).json({ success: false, message: 'Combined backup (All) is only supported in JSON format.' });
       }
 
       const rows = Array.isArray(data) ? data : [];
@@ -2504,7 +2377,6 @@ app.get('/api/export/:dataset', async (req, res) => {
   }
 });
 
-// 10. Admin Management
 app.get('/api/admins', async (req, res) => {
   try {
     const admins = await dbService.getAdmins();
@@ -2536,7 +2408,7 @@ app.post('/api/admins', async (req, res) => {
     if (requesterRole !== 'superadmin') {
       return res.status(403).json({ 
         success: false, 
-        message: 'Akses ditolak: Hanya Superadmin yang memiliki izin menambah akun administrator.' 
+        message: 'Access denied: Only Superadmin has permission to add administrator accounts.' 
       });
     }
 
@@ -2563,7 +2435,7 @@ app.patch('/api/admins/:id/telegram', async (req, res) => {
   try {
     const requesterRole = (req.headers['x-admin-role'] as string) || req.body.requester_role;
     if (requesterRole !== 'superadmin') {
-      return res.status(403).json({ success: false, message: 'Akses ditolak: Hanya Superadmin yang dapat mengubah Telegram ID admin.' });
+      return res.status(403).json({ success: false, message: 'Access denied: Only Superadmin can change admin Telegram ID.' });
     }
     const { telegram_id } = req.body || {};
     await dbService.updateAdminTelegramId(req.params.id, telegram_id);
@@ -2583,12 +2455,12 @@ app.delete('/api/admins/:id', async (req, res) => {
     if (requesterRole !== 'superadmin') {
       return res.status(403).json({ 
         success: false, 
-        message: 'Akses ditolak: Hanya Superadmin yang memiliki izin menghapus akun administrator.' 
+        message: 'Access denied: Only Superadmin has permission to delete administrator accounts.' 
       });
     }
 
     if (req.params.id === 'root_superadmin' || req.params.id === 'root_admin') {
-      return res.status(400).json({ success: false, message: 'Akun Superadmin Utama tidak dapat dihapus.' });
+      return res.status(400).json({ success: false, message: 'Main Superadmin account cannot be deleted.' });
     }
 
     await dbService.deleteAdmin(req.params.id);
@@ -2598,7 +2470,6 @@ app.delete('/api/admins/:id', async (req, res) => {
   }
 });
 
-// 10.5 Multi-Language Translation APIs
 app.post('/api/translate/auto', async (req, res) => {
   try {
     const { text, type } = req.body;
@@ -2612,7 +2483,7 @@ app.post('/api/translate/auto', async (req, res) => {
         const prompt = `You are a professional multi-lingual translator for a digital store bot.
 Translate the following store text into these 10 languages:
 id (Indonesian), ms (Malay), zh (Chinese Simplified), ru (Russian), it (Italian), es (Spanish), hi (Hindi), uz (Uzbek), ar (Arabic), en (English).
-Preserve all emojis, formatting tags (<b>, <i>, <code>, <pre>), and punctuation.
+Preserve all formatting tags (<b>, <i>, <code>, <pre>), and punctuation.
 Respond with ONLY a valid JSON object whose keys are the language codes (id, ms, zh, ru, it, es, hi, uz, ar, en) and values are the translated strings.
 
 Original text:
@@ -2635,13 +2506,13 @@ ${text}`;
 
     if (Object.keys(translations).length === 0) {
       if (type === 'welcome') {
-        translations = { ...DEFAULT_WELCOME_TEXTS, id: text };
+        translations = { ...DEFAULT_WELCOME_TEXTS, en: text };
       } else if (type === 'terms') {
-        translations = { ...DEFAULT_TERMS_TEXTS, id: text };
+        translations = { ...DEFAULT_TERMS_TEXTS, en: text };
       } else if (type === 'payment_guide') {
-        translations = { ...DEFAULT_PAYMENT_GUIDES, id: text };
+        translations = { ...DEFAULT_PAYMENT_GUIDES, en: text };
       } else if (type === 'order_guide') {
-        translations = { ...DEFAULT_ORDER_GUIDES, id: text };
+        translations = { ...DEFAULT_ORDER_GUIDES, en: text };
       } else {
         SUPPORTED_LANGUAGES.forEach(l => {
           translations[l.code] = text;
@@ -2724,10 +2595,10 @@ Respond ONLY with valid JSON in this exact structure:
 app.post('/api/settings/auto-translate-all', async (req, res) => {
   try {
     const settings = await dbService.getSettings() || {};
-    const welcome = settings.welcome_text || DEFAULT_WELCOME_TEXTS['id'];
-    const terms = settings.terms_text || DEFAULT_TERMS_TEXTS['id'];
-    const paymentGuide = settings.payment_guide_text || DEFAULT_PAYMENT_GUIDES['id'];
-    const orderGuide = settings.order_guide_text || DEFAULT_ORDER_GUIDES['id'];
+    const welcome = settings.welcome_text || DEFAULT_WELCOME_TEXTS['en'];
+    const terms = settings.terms_text || DEFAULT_TERMS_TEXTS['en'];
+    const paymentGuide = settings.payment_guide_text || DEFAULT_PAYMENT_GUIDES['en'];
+    const orderGuide = settings.order_guide_text || DEFAULT_ORDER_GUIDES['en'];
 
     let welcomeTranslations = settings.welcome_translations || {};
     let termsTranslations = settings.terms_translations || {};
@@ -2738,7 +2609,7 @@ app.post('/api/settings/auto-translate-all', async (req, res) => {
       try {
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const prompt = `Translate all 4 digital store texts into 10 languages: id, ms, zh, ru, it, es, hi, uz, ar, en.
-Keep formatting tags (<b>, <i>, <code>, <pre>), emojis, and newlines intact.
+Keep formatting tags (<b>, <i>, <code>, <pre>), and newlines intact.
 
 Welcome text:
 ${welcome}
@@ -2792,22 +2663,21 @@ Respond ONLY with valid JSON in this exact structure:
       order_guide_translations: orderGuideTranslations
     });
 
-    res.json({ success: true, message: 'Berhasil menerjemahkan seluruh teks toko ke 10 bahasa!' });
+    res.json({ success: true, message: 'Successfully translated all store texts to 10 languages!' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 11. Broadcast Engine APIs
 app.post('/api/broadcast/start', async (req, res) => {
   try {
     const { message, photo_url, target_language, button_label, button_url, admin_id } = req.body;
     if (!message) {
-      return res.status(400).json({ success: false, message: 'Pesan broadcast wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Broadcast message is required' });
     }
 
     const broadcastJob = await runBroadcast(dbService, activeBots, message, {
-      delayMs: 200, // Faster: 200ms per message (~5 msg/sec)
+      delayMs: 200,
       parseMode: 'HTML',
       photoUrl: photo_url,
       targetLanguage: target_language || 'ALL',
@@ -2833,17 +2703,12 @@ app.get('/api/broadcast/status', (req, res) => {
 app.post('/api/broadcast/stop', (req, res) => {
   try {
     stopBroadcast();
-    res.json({ success: true, message: 'Proses broadcast dihentikan.' });
+    res.json({ success: true, message: 'Broadcast process stopped.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ============================================================================
-// ENVIRONMENT VARIABLES MANAGEMENT API
-// ============================================================================
-
-// Get all environment variables (categorized for UI)
 app.get('/api/env', async (req, res) => {
   try {
     const categorized = getCategorizedEnvVars();
@@ -2854,7 +2719,6 @@ app.get('/api/env', async (req, res) => {
   }
 });
 
-// Get a single environment variable
 app.get('/api/env/:key', async (req, res) => {
   try {
     const { key } = req.params;
@@ -2869,7 +2733,6 @@ app.get('/api/env/:key', async (req, res) => {
   }
 });
 
-// Set a single environment variable
 app.post('/api/env', async (req, res) => {
   try {
     const { key, value } = req.body;
@@ -2885,7 +2748,6 @@ app.post('/api/env', async (req, res) => {
     }
     const result = setEnvVar(key, value);
     if (result.success) {
-      // Also update process.env for immediate effect in current process
       process.env[key] = String(value);
       res.json({ success: true, message: `Environment variable ${key} updated`, warning: validation.warning });
     } else {
@@ -2896,7 +2758,6 @@ app.post('/api/env', async (req, res) => {
   }
 });
 
-// Set multiple environment variables at once
 app.put('/api/env', async (req, res) => {
   try {
     const { variables } = req.body;
@@ -2922,7 +2783,6 @@ app.put('/api/env', async (req, res) => {
     }
     const result = setEnvVars(validVars);
     if (result.success) {
-      // Update process.env for immediate effect
       Object.entries(validVars).forEach(([key, value]) => {
         process.env[key] = String(value);
       });
@@ -2935,7 +2795,6 @@ app.put('/api/env', async (req, res) => {
   }
 });
 
-// Delete an environment variable
 app.delete('/api/env/:key', async (req, res) => {
   try {
     const { key } = req.params;
@@ -2944,7 +2803,6 @@ app.delete('/api/env/:key', async (req, res) => {
     }
     const result = deleteEnvVar(key);
     if (result.success) {
-      // Also remove from process.env
       delete process.env[key];
       res.json({ success: true, message: `Environment variable ${key} deleted` });
     } else {
@@ -2955,7 +2813,6 @@ app.delete('/api/env/:key', async (req, res) => {
   }
 });
 
-// Create a backup of the current .env file
 app.post('/api/env/backup', async (req, res) => {
   try {
     const result = backupEnvFile();
@@ -2969,7 +2826,6 @@ app.post('/api/env/backup', async (req, res) => {
   }
 });
 
-// List available .env backups
 app.get('/api/env/backups', async (req, res) => {
   try {
     const backups = listEnvBackups();
@@ -2979,7 +2835,6 @@ app.get('/api/env/backups', async (req, res) => {
   }
 });
 
-// Restore .env from backup
 app.post('/api/env/restore', async (req, res) => {
   try {
     const { backupPath } = req.body;
@@ -2988,7 +2843,6 @@ app.post('/api/env/restore', async (req, res) => {
     }
     const result = restoreEnvFile(backupPath);
     if (result.success) {
-      // Reload dotenv to update process.env
       dotenv.config({ override: true });
       res.json({ success: true, message: 'Environment restored from backup. Server restart recommended.' });
     } else {
@@ -2999,7 +2853,6 @@ app.post('/api/env/restore', async (req, res) => {
   }
 });
 
-// 12. NOWPayments IPN Webhook Receiver
 app.post('/api/webhooks/nowpayments', async (req, res) => {
   try {
     const rawPayload = (req as any).rawBody || JSON.stringify(req.body);
@@ -3027,10 +2880,10 @@ app.post('/api/webhooks/nowpayments', async (req, res) => {
             if (stock && stock.account_data) {
               deliveredAccount = stock.account_data;
             } else {
-              deliveredAccount = 'Akun fisik belum tersedia di stok. Admin akan segera mengirimkannya.';
+              deliveredAccount = 'Physical account not available in stock. Admin will send it shortly.';
             }
           } catch (e: any) {
-            deliveredAccount = 'Akun siap dikirim manual oleh admin.';
+            deliveredAccount = 'Account ready to be sent manually by admin.';
           }
         }
 
@@ -3052,7 +2905,6 @@ app.post('/api/webhooks/nowpayments', async (req, res) => {
   }
 });
 
-// Telegram Webhook Gateway Endpoint (When polling is disabled or webhooks configured)
 app.post('/api/webhooks/telegram/:tokenId', async (req, res) => {
   const { tokenId } = req.params;
   const botRecord = activeBots.get(tokenId);
@@ -3069,7 +2921,6 @@ app.post('/api/webhooks/telegram/:tokenId', async (req, res) => {
   res.sendStatus(200);
 });
 
-// Initialize background multi-bot engine
 (async () => {
   try {
     await autoMigrateUniversalDatabase(dbService);
@@ -3080,7 +2931,6 @@ app.post('/api/webhooks/telegram/:tokenId', async (req, res) => {
   }
 })();
 
-// Serve Frontend Vite App in Development or Static Assets in Production
 if (process.env.NODE_ENV !== 'production') {
   try {
     const vite = await createViteServer({
@@ -3101,9 +2951,8 @@ if (process.env.NODE_ENV !== 'production') {
   }
 }
 
-// Global Express Fallback Listener
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 [Server Ready] Store Express backend online on port ${PORT}`);
+  console.log(`[Server Ready] Store Express backend online on port ${PORT}`);
 });
 
 process.on('uncaughtException', (err) => {
@@ -3117,7 +2966,6 @@ process.on('unhandledRejection', (reason: any) => {
 export default app;
 export { app };
 
-// Vercel Serverless Bootstrap: auto-initialize database schema & seeds
 export async function bootstrapServerless() {
   try {
     await dbService.ensureSeeded();
